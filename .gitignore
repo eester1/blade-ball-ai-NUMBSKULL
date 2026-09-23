@@ -1,0 +1,30 @@
+# Recorded gameplay sessions (large: frames + logs) and diagnostic dumps
+recordings/
+live_session*_frames/
+*.jsonl
+
+# Generated/derived data -- reproducible from recordings/ via the scripts
+dataset.csv
+model.joblib
+
+# Python
+__pycache__/
+*.pyc
+
+# Local Claude Code settings
+.claude/
+
+# Unrelated project (health-bar reader / targeting bot) -- not part of
+# the Blade Ball AI, lives in the same folder but doesn't belong here.
+ai_bot.py
+coord_finder.py
+crop_template.py
+enemy_hp_reader.py
+hello.py
+hp_reader.py
+screenshot_capture.py
+server.py
+target.py
+damage_screenshot.png
+enemy_bar_template.png
+Unkown_txt3.txt
