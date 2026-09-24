@@ -227,6 +227,18 @@ def find_ball_candidates(frame_bgr, cfg):
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     white_mask, red_mask = build_masks(hsv, cfg)
 
+    h, w = frame_bgr.shape[:2]
+    roi = cfg["self_highlight_roi"]
+    own_x0, own_x1 = roi["x0"] * w, roi["x1"] * w
+    own_y0, own_y1 = roi["y0"] * h, roi["y1"] * h
+
+    def on_own_character(x, y):
+        # Your own character sits in this fixed region: while you're
+        # targeted its red-tinted body passes as a red ball, and its parts
+        # (e.g. a white face mask) as a white one. The real ball is beside
+        # or above you at contact, not centered on your body.
+        return own_x0 <= x <= own_x1 and own_y0 <= y <= own_y1
+
     candidates, cores = [], []
     for mask, state in ((white_mask, "idle"), (red_mask, "targeting")):
         mask = apply_ui_mask(mask, cfg)
@@ -258,11 +270,12 @@ def find_ball_candidates(frame_bgr, cfg):
                 M = cv2.moments(c)
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
-                candidates.append((max(circularity, hull_circularity), cx, cy, state,
-                                   (area / np.pi) ** 0.5))
+                if not on_own_character(cx, cy):
+                    candidates.append((max(circularity, hull_circularity), cx, cy, state,
+                                       (area / np.pi) ** 0.5))
             else:
                 core = _round_core(mask, solid, bx, by, area, cfg)
-                if core is not None:
+                if core is not None and not on_own_character(core[0], core[1]):
                     cx, cy, radius = core
                     cores.append((cfg["min_circularity"], cx, cy, state, radius))
 
@@ -338,6 +351,19 @@ def targeting_ball(candidates, self_red, cfg):
         return None
     red = [c for c in candidates if c[3] == "targeting"]
     return most_circular(red) if red else None
+
+
+def prefer_red(near, red_target, point):
+    """While you're targeted (red_target not None), a red ball beats whatever
+    else is being tracked -- otherwise a stuck white decoy keeps "continuing"
+    itself while the red ball coming at you is ignored. Returns
+    (candidate, continued_existing_track), or None when not targeted."""
+    if red_target is None:
+        return None
+    near_red = [c for c in near if c[3] == "targeting"]
+    if near_red:
+        return closest_to(near_red, point), True
+    return red_target, False
 
 
 def closest_to(candidates, point):
@@ -451,21 +477,22 @@ def run_session(session_dir, cfg, debug, debug_every):
     for i, (candidates, cores) in enumerate(raw):
         fresh = last_good is None or i - last_good_idx > cfg["reset_after_missing_frames"] \
             or stale_count >= cfg["stale_after_frames"]
+        red_target = targeting_ball(candidates, self_red[i], cfg)
         if fresh:
             if not candidates:
                 continue
-            x, y, state, radius = most_circular(candidates)[1:]
+            x, y, state, radius = (red_target or most_circular(candidates))[1:]
         else:
             elapsed = i - last_good_idx
             allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
             near = near_track(candidates, cores, last_good, last_radius, allowed, cfg)
-            red_target = targeting_ball(candidates, self_red[i], cfg)
+            choice = prefer_red(near, red_target, last_good)
             if elapsed <= cfg["size_continuity_frames"]:
                 candidates = size_consistent(candidates, last_radius, cfg)
-            if near:
+            if choice is not None:
+                x, y, state, radius = choice[0][1:]
+            elif near:
                 x, y, state, radius = closest_to(near, last_good)[1:]
-            elif red_target is not None:
-                x, y, state, radius = red_target[1:]
             elif not candidates:
                 continue
             else:

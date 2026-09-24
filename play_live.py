@@ -90,18 +90,20 @@ MOUSE_ACTIONS = {"block": mouse.Button.left}
 TAP_ACTIONS = {"block": 0.35}
 TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 
-# The model is good at *whether* to block (targeted, red ball coming) but
-# not at *when*: live, it tapped with the ball still ~1.1s away, the block
-# was used up, and a second tap then came too late / during Blade Ball's
-# block cooldown. So a block is only let through once the ball is close:
-# apparent radius at least BLOCK_MIN_RADIUS (~0.4s out on a normal-speed
-# ball in that log), or -- for a fast ball, which closes the last stretch in
-# fewer frames -- at least BLOCK_FAST_MIN_RADIUS with an estimated time to
-# contact under BLOCK_FAST_TTC_S. Raise these if it still blocks early,
-# lower them if it starts blocking too late.
-BLOCK_MIN_RADIUS = 20
-BLOCK_FAST_MIN_RADIUS = 14
-BLOCK_FAST_TTC_S = 0.4
+# Blocking is gated on the ball being close, because timing is what the
+# model gets wrong in both directions: it tapped with the ball ~1.1s away
+# (block used up, then died), and right at contact it often *doesn't* want
+# to block, since in your recordings you'd already pressed earlier. So:
+# - a block only goes through once the ball is within BLOCK_MAX_CHAR_DIST
+#   pixels of your character on screen. Whatever direction it comes from, a
+#   ball reaching you ends up at your character's spot on screen; its
+#   apparent size isn't a reliable stand-in (a ball near the camera looks
+#   big while far from you; one from above/behind hits you looking small).
+#   Every successful live block was 121-191px away, every contact 113-195px.
+# - once it's that close, block if the model wants to, *or* if you're
+#   targeted and the ball is red -- that combination alone is enough.
+# Raise it if it blocks too late, lower it if it blocks too early.
+BLOCK_MAX_CHAR_DIST = 200
 
 # Your character's red "targeted" tint can blink off while the ball is
 # still coming -- e.g. during your own block animation. For this long after
@@ -145,11 +147,12 @@ CAMERA_MOUSE_SPEED = 900
 CAMERA_REANCHOR_PX = 250
 
 
-def close_enough_to_block(row):
-    """Whether the ball is close enough for a block to land (see BLOCK_*)."""
-    radius = row["ball_radius"]
-    return radius >= BLOCK_MIN_RADIUS or \
-        (radius >= BLOCK_FAST_MIN_RADIUS and row["ball_ttc"] <= BLOCK_FAST_TTC_S)
+def should_block(model_wants, ball, targeted, character_xy):
+    """Final block decision for this frame (see BLOCK_* above)."""
+    x, y, state, _ = ball
+    distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
+    return distance <= BLOCK_MAX_CHAR_DIST and \
+        (model_wants or (targeted and state == "targeting"))
 
 
 class _MOUSEINPUT(ctypes.Structure):
@@ -374,23 +377,27 @@ class AIController:
         # a static decoy: a map decoration, a standing player, an unmasked
         # UI element) and force a fresh whole-frame search instead.
         stale = self.stale_count >= self.cfg["stale_after_frames"]
+        red_target = track_ball.targeting_ball(candidates, self.self_red, self.cfg)
         if self.prev_ball is None or stale:
             self.pending = None
             self.track_len = 0
+            if red_target is not None:
+                return red_target[1:]
             return track_ball.most_circular(candidates)[1:] if candidates else None
 
         px, py, pr = self.prev_ball
         max_dist = self.cfg["max_jump_px_per_frame"] * max(1, self.missing_streak + 1)
         near = track_ball.near_track(candidates, cores, (px, py), pr, max_dist, self.cfg)
+        choice = track_ball.prefer_red(near, red_target, (px, py))
+        if choice is not None:
+            ball, continued = choice
+            self.pending = None
+            self.track_len = self.track_len + 1 if continued else 0
+            return ball[1:]
         if near:
             self.pending = None
             self.track_len += 1
             return track_ball.closest_to(near, (px, py))[1:]
-        red_target = track_ball.targeting_ball(candidates, self.self_red, self.cfg)
-        if red_target is not None:
-            self.pending = None
-            self.track_len = 0
-            return red_target[1:]
         if self.missing_streak < self.cfg["size_continuity_frames"]:
             candidates = track_ball.size_consistent(candidates, pr, self.cfg)
         if not candidates:
@@ -482,6 +489,8 @@ class AIController:
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
         self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
+        roi = self.cfg["self_highlight_roi"]
+        character_xy = ((roi["x0"] + roi["x1"]) / 2 * width, (roi["y0"] + roi["y1"]) / 2 * height)
 
         print("Insert = toggle AI on/off, End = quit.")
         print("Starting in OFF state -- press Insert when you're ready.")
@@ -537,7 +546,9 @@ class AIController:
                     self.last_feature_t = capture_t
 
                     desired, proba = self.predict_actions(row)
-                    if "block" in desired and not close_enough_to_block(row):
+                    if should_block("block" in desired, ball, targeted, character_xy):
+                        desired = desired | {"block"}
+                    else:
                         desired = desired - {"block"}
                     tapped = self.apply_actions(desired)
                     self.steer_camera(ball, width, capture_t, targeted)
