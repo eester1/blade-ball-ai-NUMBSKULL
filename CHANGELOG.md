@@ -15,6 +15,7 @@
 
 ### Docs
 
+- New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.
 - A warning that botting is against Roblox's Terms of Use, and a new README section, [Long runs and log size](README.md#long-runs-and-log-size): logged runs use about 29 GB per hour of play, so untick **Save a log of this run** for long runs.
 
 ### Fixed

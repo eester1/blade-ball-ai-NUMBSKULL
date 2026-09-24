@@ -47,6 +47,42 @@ pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
 
+## Windowed or fullscreen? Play the way you record
+
+**The AI plays best in the same window mode you recorded your games in.** If your recordings are windowed, play windowed; if they're fullscreen, play fullscreen. Mixing the two makes it worse at both.
+
+### Why it matters
+
+The AI doesn't look inside the Roblox window: it takes a screenshot of the **whole monitor**, and everything it knows is measured in screen pixels. Windowed and fullscreen Roblox put the game in a different place on that screenshot:
+
+| | Fullscreen | Windowed (maximized) |
+|---|---|---|
+| Game picture | the whole 1920×1080 screen | squeezed between the window's title bar at the top (about 30 px) and the Windows taskbar at the bottom (about 50 px) |
+| Your character | at one spot on screen | a little higher, and a little smaller |
+| The ball, the HUD, the menus | one size and position | slightly smaller and shifted |
+
+A few percent sounds small, but a lot of the AI depends on exact pixel positions and sizes:
+
+- **The AI's model** learned from your recordings where the ball tends to be on screen, how far it is from the middle, and how big it looks when it's about to hit. If it learned windowed and plays fullscreen, all of those are a little off.
+- **Block timing** — the "close enough to block" distances and ball sizes (the `BLOCK_*` settings in `play_live.py`) were tuned from live runs.
+- **The "you're targeted" check** looks at a small, fixed box around where your character stands. It's kept tight on purpose, so a shifted character partly falls outside it.
+- **The ignored HUD areas** (menus, coin counter, block/ability icons) are fixed boxes on the screen.
+- **Auto's lobby and vote detection** allow for a few percent of size difference. The TRADE-button check has been tested on both modes; the Classic vote button so far only windowed.
+
+### What to do
+
+- **Pick one mode and stick to it,** for recording and for playing.
+- **Keep everything else the same too:** the same monitor resolution (tested at 1920×1080), a maximized window if you play windowed, and the same camera zoom.
+- **To switch modes:**
+  1. Record several new games in the new mode.
+  2. Move the old recordings out of `recordings/`, for example into a `recordings_windowed/` folder next to it, so the AI learns only from the new mode. Keep them rather than deleting them, in case you switch back.
+  3. Press **Update model** with **Re-track all recordings** ticked.
+  4. Play a few short logged runs and **Score** them. The block settings were tuned in the old mode and may need adjusting.
+
+**How to tell which mode a recording is in:** open any image in its `frames` folder. If there's a white title bar saying "Roblox" at the top and the Windows taskbar at the bottom, it's windowed. If the game fills the whole picture, it's fullscreen.
+
+**This project's own data, for reference:** of the 14 recordings the current model was trained on, 9 are windowed (about 9,800 frames, 69%) and 5 are fullscreen (about 4,500 frames), and every live run so far was played windowed. So the AI is tuned for **windowed** play right now.
+
 ## The easy way: the control panel
 
 ```
@@ -138,7 +174,7 @@ What makes recordings useful:
 - **Use your ability with Q.** The AI can only learn to use abilities if you do in your recordings; none of the current ones have any.
 - **Mix maps and situations.** The AI only learns what it has seen, so record on several maps, in close fights, and when the ball comes at you from behind.
 - **Record whole rounds.** Keep recording through the calm parts too, because the AI also needs to learn when *not* to block. Stop recording between matches, in menus and lobbies.
-- **Keep the same camera zoom and screen resolution** that the AI plays at. Detection and the block distances assume them.
+- **Record the same way the AI will play: windowed or fullscreen, same resolution, same camera zoom.** Detection, block distances and the model all assume it. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)
 
 Each recording is saved to `recordings/session_<date>_<time>/`. To remove a bad recording (for example, you were in a menu the whole time), delete its folder, then press **Update model**.
 
@@ -441,4 +477,4 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
-- **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.
+- **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play. That includes the window mode: record and play either windowed or fullscreen, not a mix. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)
