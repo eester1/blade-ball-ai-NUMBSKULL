@@ -4,21 +4,13 @@ from one or more sessions into a single CSV ready for training.
 
 Each output row is one frame with:
   - session, frame, t          (bookkeeping)
-  - ball_x, ball_y             (raw pixel position)
-  - ball_rel_x, ball_rel_y     (position relative to screen center --
-                                 a rough proxy for "relative to player",
-                                 since the camera generally stays centered
-                                 on your character)
-  - ball_vel_x, ball_vel_y     (pixels PER SECOND since the previous
-                                 frame that had a detected ball -- 0 for
-                                 the first detected frame of a session.
-                                 Real-time units instead of pixels/frame
-                                 so the feature stays correct even if the
-                                 loop that captured it wasn't running at
-                                 a perfectly steady rate.)
-  - ball_state                 ("idle" or "targeting")
-  - held_<action>              one column per tracked key/button, 1 if
-                                 held at that frame, else 0
+  - ball_x, ball_y, ball_state (raw detection)
+  - every column in features.FEATURE_COLUMNS -- screen position relative
+    to center, velocity in px/s, distance, closing speed, targeting flag,
+    and the depth cues (apparent radius, its growth rate, time-to-contact).
+    Computed by the same FeatureTracker that play_live.py uses, so the
+    training features and live features can't drift apart.
+  - one label column per action in LABELS (1 if held that frame, else 0)
 
 Frames where the ball wasn't detected are dropped entirely -- there's
 nothing useful to learn from a frame with no ball position, and we'd
@@ -27,8 +19,8 @@ rather have clean gaps than made-up data.
 USAGE:
     python build_dataset.py recordings/session_A recordings/session_B ... -o dataset.csv
 
-    (Run track_ball.py on each session first if you haven't already --
-    this script expects ball_tracks.jsonl to already exist in each one.)
+    (Run track_ball.py on each session first -- this script expects
+    ball_tracks.jsonl, including the ball_r radius field, in each one.)
 """
 
 import argparse
@@ -36,8 +28,22 @@ import csv
 import json
 from pathlib import Path
 
-# Must match the actions tracked in record_gameplay.py
-ACTIONS = ["w", "a", "s", "d", "mouse_left", "mouse_right"]
+from features import FeatureTracker
+
+# Labels are defined by what an action *does* in-game, not by which
+# physical input did it: blocking works with either left click or F, so
+# both count as a block. Keys here must match what record_gameplay.py
+# records. Right mouse isn't a label on purpose -- in Roblox, holding it
+# and dragging rotates the camera, so those frames are camera movement,
+# not an action (play_live.py controls the camera separately).
+LABELS = {
+    "held_w": {"w"},
+    "held_a": {"a"},
+    "held_s": {"s"},
+    "held_d": {"d"},
+    "held_block": {"mouse_left", "f"},
+    "held_ability": {"q"},
+}
 
 
 def load_jsonl(path):
@@ -53,8 +59,7 @@ def load_jsonl(path):
 def get_frame_size(session_dir):
     """Peek at one frame image to get width/height for the relative-position feature."""
     from PIL import Image
-    frames_dir = session_dir / "frames"
-    first_frame = next(frames_dir.glob("*.jpg"), None)
+    first_frame = next((session_dir / "frames").glob("*.jpg"), None)
     if first_frame is None:
         return None
     with Image.open(first_frame) as img:
@@ -71,63 +76,41 @@ def build_rows(session_dir):
               f"(run record_gameplay.py and track_ball.py first).")
         return []
 
-    inputs = load_jsonl(inputs_path)
     tracks = {t["frame"]: t for t in load_jsonl(tracks_path)}
+    if any(t.get("ball_x") is not None and "ball_r" not in t for t in tracks.values()):
+        print(f"Skipping {session_dir}: ball_tracks.jsonl predates radius tracking "
+              f"(re-run track_ball.py on it).")
+        return []
+
     size = get_frame_size(session_dir)
     if size is None:
         print(f"Skipping {session_dir}: no frame images found.")
         return []
-    width, height = size
-    center_x, center_y = width / 2, height / 2
+    center_x, center_y = size[0] / 2, size[1] / 2
 
-    # Frames aren't perfectly evenly spaced (capture jitter, dropped
-    # frames), so a dt below this is almost certainly a timestamp glitch
-    # rather than a real near-instantaneous re-detection -- treat it as
-    # "no time passed" and fall back to zero velocity rather than dividing
-    # by a near-zero number and producing a huge bogus spike.
-    MIN_DT = 1e-3
-
+    tracker = FeatureTracker()
     rows = []
-    prev_x = prev_y = prev_t = None
-
-    for inp in inputs:
-        frame = inp["frame"]
-        track = tracks.get(frame)
+    for inp in load_jsonl(inputs_path):
+        track = tracks.get(inp["frame"])
         if track is None or track.get("ball_x") is None:
             continue  # ball not detected this frame -- drop it
 
-        x, y, t = track["ball_x"], track["ball_y"], inp["t"]
-        dt = None if prev_t is None else t - prev_t
-        if dt is None or dt < MIN_DT:
-            vel_x = vel_y = 0
-        else:
-            vel_x = (x - prev_x) / dt
-            vel_y = (y - prev_y) / dt
-        prev_x, prev_y, prev_t = x, y, t
-
-        rel_x, rel_y = x - center_x, y - center_y
-        distance = (rel_x ** 2 + rel_y ** 2) ** 0.5
-        # Positive = ball closing in on you, negative = moving away.
-        # (dot of velocity with the direction from ball to screen center)
-        closing_speed = 0.0 if distance < 1e-6 else -(rel_x * vel_x + rel_y * vel_y) / distance
-
+        features = tracker.update(
+            track["ball_x"], track["ball_y"], track["state"], track["ball_r"],
+            inp["t"], center_x, center_y,
+        )
         held = set(inp.get("held", []))
         row = {
             "session": session_dir.name,
-            "frame": frame,
+            "frame": inp["frame"],
             "t": inp["t"],
-            "ball_x": x,
-            "ball_y": y,
-            "ball_rel_x": rel_x,
-            "ball_rel_y": rel_y,
-            "ball_vel_x": vel_x,
-            "ball_vel_y": vel_y,
-            "ball_distance": distance,
-            "ball_closing_speed": closing_speed,
+            "ball_x": track["ball_x"],
+            "ball_y": track["ball_y"],
             "ball_state": track["state"],
+            **features,
         }
-        for action in ACTIONS:
-            row[f"held_{action}"] = 1 if action in held else 0
+        for label, inputs in LABELS.items():
+            row[label] = 1 if held & inputs else 0
         rows.append(row)
 
     return rows
@@ -149,9 +132,8 @@ def main():
         print("No usable rows -- nothing written.")
         return
 
-    fieldnames = list(all_rows[0].keys())
     with open(args.output, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
         writer.writeheader()
         writer.writerows(all_rows)
 

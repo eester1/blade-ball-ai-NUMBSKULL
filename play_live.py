@@ -2,9 +2,10 @@
 Live AI play for Blade Ball.
 
 Watches your screen in real time, detects the ball (reusing track_ball.py's
-detection code), builds the same features build_dataset.py used for
-training, feeds them into your trained model, and presses/releases the
-predicted keys and mouse buttons for you.
+detection code), builds the same features training used (features.py),
+feeds them into your trained model, and presses/releases the predicted
+actions for you. It also turns the camera to keep the ball in view: the
+model can only react to a ball it can see.
 
 SETUP (run once, if you haven't already):
     pip install mss pynput joblib pandas scikit-learn opencv-python numpy
@@ -17,6 +18,22 @@ USAGE:
     - Press End to quit immediately. This always releases every key/
       button first, so nothing gets left stuck held down.
 
+    Camera control (see CAMERA_* settings below):
+    - --camera keys   (default) turns with the Left/Right arrow keys,
+                      Roblox's built-in camera rotation keys.
+    - --camera mouse  turns by holding right mouse and dragging, sent as
+                      raw relative mouse input. Try this if arrow keys
+                      don't rotate the camera in Blade Ball.
+    - --camera off    never touches the camera.
+    - --camera-invert flips the turn direction, if it turns the wrong way.
+    - --camera-test   turns left for a second, then right, and exits --
+                      a quick check that the camera method and direction
+                      are right before letting the AI play.
+
+    Diagnostics: --log session.jsonl writes one JSON line per frame the
+    AI acted on (features, model confidences, actions, camera state) and
+    saves each captured frame into session_frames/.
+
 SAFETY: while ON, this sends REAL key/mouse input to whatever window is
 focused. Keep Roblox focused and your hand near the keyboard the first
 few times you try it, in case it does something you don't want -- End
@@ -24,9 +41,11 @@ stops everything instantly.
 """
 
 import argparse
+import ctypes
 import json
-import time
+import sys
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -35,81 +54,181 @@ import mss
 import numpy as np
 from pynput import keyboard, mouse
 
-import track_ball  # reuses find_ball / load_config / color_config.json
+import track_ball
+from features import FeatureTracker
 
-# Target capture rate. Velocity is now computed in pixels/second from
-# real timestamps (see predict_actions), so this no longer needs to match
-# the recording FPS exactly -- it just caps how often we poll the screen.
+# Target capture rate -- caps how often the screen is polled. Velocity is
+# measured in pixels/second from real timestamps, so this doesn't have to
+# match the recording FPS exactly.
 FPS = 15
 
-# How confident the model needs to be (0-1) before actually pressing each
-# action. Default is 0.5 (the model's own best guess). Lower this for an
-# action to make it act on weaker hunches -- more false alarms, but fewer
-# missed moments. Blocking is lowered here since missing a real block
-# (death) is worse than an unnecessary one (mostly harmless).
+# How confident the model needs to be (0-1) before actually taking each
+# action. Blocking is lowered: missing a real block (death) is worse than
+# an unnecessary one (mostly harmless).
 THRESHOLDS = {
     "held_w": 0.5,
     "held_a": 0.5,
     "held_s": 0.5,
     "held_d": 0.5,
-    "held_mouse_left": 0.3,
-    "held_mouse_right": 0.5,
+    "held_block": 0.3,
+    "held_ability": 0.5,
 }
+
+# How each model label is carried out. Block uses left click (verified to
+# block live); F would work too.
+KEY_ACTIONS = {"w": "w", "a": "a", "s": "s", "d": "d", "ability": "q"}
+MOUSE_ACTIONS = {"block": mouse.Button.left}
 
 TOGGLE_KEY = keyboard.Key.insert
 QUIT_KEY = keyboard.Key.end
 
-KEY_ACTIONS = {"w": "w", "a": "a", "s": "s", "d": "d"}
-MOUSE_ACTIONS = {"mouse_left": mouse.Button.left, "mouse_right": mouse.Button.right}
-
 # If the ball goes undetected for this many consecutive frames, release
-# everything as a safety net (probably out of a round, or tracking lost).
+# every held action as a safety net (probably out of a round, or lost).
 MISSING_FRAMES_RESET = 30
+
+# --- Camera control ---------------------------------------------------------
+# Turn toward the ball only once it's past this fraction of the way from
+# screen center to the left/right edge. The dead zone in the middle keeps
+# the ball's on-screen position meaningful to the model (which learned
+# from your recordings, where the ball wasn't pinned to center), while
+# still stopping it from drifting off-screen.
+CAMERA_EDGE_ZONE = 0.5
+# Turn duration per unit of distance past the edge zone, and its bounds.
+CAMERA_TURN_GAIN_S = 0.3
+CAMERA_MIN_TURN_S = 0.04
+CAMERA_MAX_TURN_S = 0.15
+# Once the ball has been missing this many frames, sweep toward the side
+# it was last seen on to find it again...
+CAMERA_SEARCH_AFTER_FRAMES = 8
+CAMERA_SEARCH_TURN_S = 0.12
+# ...but stop after this long: it's probably between rounds, not lost.
+CAMERA_SEARCH_MAX_S = 6.0
+# Drag speed in "mouse" mode, in mouse counts per second.
+CAMERA_MOUSE_SPEED = 900
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("mi", _MOUSEINPUT)]
+
+
+def move_mouse_relative(dx, dy):
+    """Raw relative mouse movement via SendInput. Roblox rotates the camera
+    from raw mouse deltas while right mouse is held; moving the cursor to an
+    absolute position (what pynput does) isn't reliably seen as a drag."""
+    if sys.platform != "win32":
+        raise RuntimeError("--camera mouse needs Windows (SendInput)")
+    inp = _INPUT(type=0, mi=_MOUSEINPUT(dx, dy, 0, 0x0001, 0, 0))  # MOUSEEVENTF_MOVE
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
+class Camera:
+    """Non-blocking camera turning: turn() starts or extends a timed turn,
+    update() (called every loop iteration) keeps it going and ends it."""
+
+    def __init__(self, method, invert, kb, ms):
+        self.method = method
+        self.invert = invert
+        self.kb = kb
+        self.ms = ms
+        self.direction = 0      # -1 = turning left, +1 = right, 0 = idle
+        self.until = 0.0
+        self.last_active = 0.0  # last time the view was moving
+        self._last_move = None  # mouse mode: time of the last drag step
+
+    def turn(self, direction, duration, now):
+        if self.method == "off":
+            return
+        if self.invert:
+            direction = -direction
+        if direction != self.direction:
+            self.stop()
+            self._press(direction, now)
+            self.direction = direction
+            self.until = now + duration
+        else:
+            self.until = max(self.until, now + duration)
+        self.last_active = now
+
+    def update(self, now):
+        if self.direction == 0:
+            return
+        if self.method == "mouse":
+            dx = int(self.direction * CAMERA_MOUSE_SPEED * (now - self._last_move))
+            if dx:
+                move_mouse_relative(dx, 0)
+            self._last_move = now
+        self.last_active = now
+        if now >= self.until:
+            self.stop()
+
+    def stop(self):
+        if self.direction == 0:
+            return
+        if self.method == "keys":
+            self.kb.release(keyboard.Key.left if self.direction < 0 else keyboard.Key.right)
+        elif self.method == "mouse":
+            self.ms.release(mouse.Button.right)
+        self.direction = 0
+
+    def _press(self, direction, now):
+        if self.method == "keys":
+            self.kb.press(keyboard.Key.left if direction < 0 else keyboard.Key.right)
+        elif self.method == "mouse":
+            self.ms.press(mouse.Button.right)
+            self._last_move = now
 
 
 class AIController:
-    def __init__(self, model_path, log_path=None):
+    def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
         self.feature_columns = data["feature_columns"]
         self.label_columns = data["label_columns"]
+        unknown = [label for label in self.label_columns
+                   if label.replace("held_", "") not in KEY_ACTIONS | MOUSE_ACTIONS]
+        if unknown:
+            raise SystemExit(f"{model_path} was trained with an older label set {unknown} this "
+                             f"version can't act on -- rebuild the dataset and retrain:\n"
+                             f"  python build_dataset.py recordings/*/ -o dataset.csv\n"
+                             f"  python train_model.py dataset.csv -o model.joblib")
 
         self.cfg = track_ball.load_config()
         self.kb = keyboard.Controller()
         self.ms = mouse.Controller()
+        self.camera = Camera(camera_method, camera_invert, self.kb, self.ms)
 
         self.enabled = False
         self.quit = False
         self._lock = threading.Lock()
 
         self.currently_held = set()
-        self.prev_ball = None  # (x, y, t) from the previous frame, for velocity
+        self.features = FeatureTracker()
+        self.last_feature_t = 0.0
+        self.prev_ball = None     # (x, y) of the last trusted detection
+        self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
         self.missing_streak = 0
-        self.stale_count = 0  # consecutive frames barely-unchanged in position
-        self.pending = None    # (x, y, state) candidate awaiting next-frame confirmation
-
-        # Below this dt, treat elapsed time as "basically zero" and fall
-        # back to zero velocity instead of dividing by a near-zero number
-        # (matches build_dataset.py's MIN_DT so train/live features agree).
-        self.MIN_DT = 1e-3
+        self.missing_since = None
+        self.stale_count = 0      # consecutive frames barely-unchanged in position
+        self.pending = None       # candidate awaiting next-frame confirmation
 
         # Once pressed, some actions must stay held for at least this long
         # (seconds) before they're allowed to release, even if the model's
         # frame-by-frame confidence dips below threshold in between. This
         # stops a correctly-timed-but-brief block signal from letting go
         # right before the ball actually arrives.
-        self.min_hold_seconds = {"mouse_left": 0.4}
+        self.min_hold_seconds = {"block": 0.4}
         self.press_time = {}  # action -> time.time() it was last pressed
 
         self._sct = mss.mss()
 
-        # Optional diagnostic log: one JSON line per live-inferred frame
-        # (ball position/velocity as seen live, predicted confidences,
-        # actions taken). Lets us compare what the model saw during an
-        # actual match against the training data's feature distribution,
-        # instead of guessing why live behavior diverges from offline
-        # test-set metrics.
         self._log_file = open(log_path, "w") if log_path else None
         self._log_frame_idx = 0
         self._log_frames_dir = None
@@ -124,6 +243,11 @@ class AIController:
             with self._lock:
                 self.enabled = not self.enabled
                 state = self.enabled
+                # Start fresh -- tracking state from before a pause is stale
+                # (and would block the camera search from kicking in).
+                self.missing_streak = 0
+                self.prev_ball = None
+                self.pending = None
             print(f"[AI {'ENABLED' if state else 'disabled'}]")
             if not state:
                 self.release_all()
@@ -153,17 +277,15 @@ class AIController:
         for action in list(self.currently_held):
             self.release_action(action)
         self.currently_held = set()
+        self.camera.stop()
 
     def apply_actions(self, desired):
         now = time.time()
         to_press = desired - self.currently_held
 
-        release_candidates = self.currently_held - desired
         to_release = set()
-        for action in release_candidates:
-            min_hold = self.min_hold_seconds.get(action, 0)
-            pressed_at = self.press_time.get(action, 0)
-            if now - pressed_at >= min_hold:
+        for action in self.currently_held - desired:
+            if now - self.press_time.get(action, 0) >= self.min_hold_seconds.get(action, 0):
                 to_release.add(action)
             # else: not held long enough yet -- keep it held a bit longer
 
@@ -175,59 +297,86 @@ class AIController:
 
         self.currently_held = (self.currently_held - to_release) | to_press
 
+    # --- ball tracking -------------------------------------------------
+
+    def select_ball(self, candidates):
+        """Pick the real ball out of this frame's candidates, or None.
+        Mirrors track_ball.py's batch tracker, except that live play can't
+        peek at the next frame -- a big jump is held as pending for one
+        frame and only trusted if the next frame confirms it."""
+        if not candidates:
+            return None
+
+        # A real ball shouldn't sit at the exact same pixel for seconds --
+        # if it has, stop trusting proximity to that spot (it's more likely
+        # a static decoy: a map decoration, a standing player, an unmasked
+        # UI element) and force a fresh whole-frame search instead.
+        stale = self.stale_count >= self.cfg["stale_after_frames"]
+        if self.prev_ball is None or stale:
+            self.pending = None
+            return track_ball.most_circular(candidates)[1:]
+
+        px, py = self.prev_ball
+        max_dist = self.cfg["max_jump_px_per_frame"] * max(1, self.missing_streak + 1)
+        near = [c for c in candidates if ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist]
+        if near:
+            self.pending = None
+            return track_ball.closest_to(near, (px, py))[1:]
+
+        best = track_ball.most_circular(candidates)[1:]
+        if self.pending is not None and \
+                ((best[0] - self.pending[0]) ** 2 + (best[1] - self.pending[1]) ** 2) ** 0.5 \
+                <= self.cfg["max_jump_px_per_frame"]:
+            self.pending = None
+            return best
+        self.pending = best
+        return None
+
+    # --- camera --------------------------------------------------------
+
+    def steer_camera(self, ball_x, width, now):
+        if ball_x is not None:
+            offset = (ball_x - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
+            self.last_seen_side = -1 if offset < 0 else 1
+            beyond = abs(offset) - CAMERA_EDGE_ZONE
+            if beyond > 0:
+                duration = min(max(beyond * CAMERA_TURN_GAIN_S / (1 - CAMERA_EDGE_ZONE),
+                                   CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
+                self.camera.turn(self.last_seen_side, duration, now)
+        elif self.missing_streak >= CAMERA_SEARCH_AFTER_FRAMES and \
+                now - self.missing_since <= CAMERA_SEARCH_MAX_S:
+            self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now)
+
     # --- per-frame prediction -----------------------------------------
 
-    def predict_actions(self, ball_x, ball_y, state, center_x, center_y, t, frame_bgr=None):
-        if self.prev_ball is None:
-            vel_x = vel_y = 0
-        else:
-            dt = t - self.prev_ball[2]
-            if dt < self.MIN_DT:
-                vel_x = vel_y = 0
-            else:
-                vel_x = (ball_x - self.prev_ball[0]) / dt
-                vel_y = (ball_y - self.prev_ball[1]) / dt
-        self.prev_ball = (ball_x, ball_y, t)
-
-        rel_x, rel_y = ball_x - center_x, ball_y - center_y
-        distance = (rel_x ** 2 + rel_y ** 2) ** 0.5
-        closing_speed = 0.0 if distance < 1e-6 else -(rel_x * vel_x + rel_y * vel_y) / distance
-        state_targeting = 1 if state == "targeting" else 0
-
-        row = {
-            "ball_rel_x": rel_x, "ball_rel_y": rel_y,
-            "ball_vel_x": vel_x, "ball_vel_y": vel_y,
-            "ball_distance": distance, "ball_closing_speed": closing_speed,
-            "state_targeting": state_targeting,
-        }
+    def predict_actions(self, row):
         features = [[row[col] for col in self.feature_columns]]
-        scaled = self.scaler.transform(features)
         # predict_proba returns per-label confidence (0-1) instead of just
-        # a yes/no guess, so each action can use its own threshold below.
-        proba = self.model.predict_proba(scaled)[0]
+        # a yes/no guess, so each action can use its own threshold.
+        proba = self.model.predict_proba(self.scaler.transform(features))[0]
+        desired = {
+            label.replace("held_", "")
+            for label, confidence in zip(self.label_columns, proba)
+            if confidence >= THRESHOLDS.get(label, 0.5)
+        }
+        return desired, proba
 
-        desired = set()
-        for label, confidence in zip(self.label_columns, proba):
-            threshold = THRESHOLDS.get(label, 0.5)
-            if confidence >= threshold:
-                desired.add(label.replace("held_", ""))
-
-        if self._log_file is not None:
-            frame_name = None
-            if self._log_frames_dir is not None and frame_bgr is not None:
-                frame_name = f"{self._log_frame_idx:06d}.jpg"
-                cv2.imwrite(str(self._log_frames_dir / frame_name), frame_bgr)
-                self._log_frame_idx += 1
-            entry = {
-                "t": t, "frame": frame_name, "ball_x": ball_x, "ball_y": ball_y, "state": state,
-                **row,
-                "proba": {label: float(p) for label, p in zip(self.label_columns, proba)},
-                "desired": sorted(desired),
-            }
-            self._log_file.write(json.dumps(entry) + "\n")
-            self._log_file.flush()
-
-        return desired
+    def log_frame(self, t, frame_bgr, ball, row, proba, desired):
+        frame_name = None
+        if self._log_frames_dir is not None:
+            frame_name = f"{self._log_frame_idx:06d}.jpg"
+            cv2.imwrite(str(self._log_frames_dir / frame_name), frame_bgr)
+            self._log_frame_idx += 1
+        x, y, state, radius = ball
+        entry = {
+            "t": t, "frame": frame_name, "ball_x": x, "ball_y": y, "state": state,
+            **row,
+            "proba": {label: float(p) for label, p in zip(self.label_columns, proba)},
+            "desired": sorted(desired),
+            "camera": self.camera.direction,
+        }
+        self._log_file.write(json.dumps(entry) + "\n")
+        self._log_file.flush()
 
     # --- main loop -------------------------------------------------
 
@@ -246,88 +395,87 @@ class AIController:
                 enabled = self.enabled
 
             if enabled:
+                self.camera.update(start)
                 capture_t = time.time()
-                shot = self._sct.grab(region)
-                frame = np.array(shot)
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                candidates = track_ball.find_ball_candidates(frame_bgr, self.cfg)
+                frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
+                ball = self.select_ball(track_ball.find_ball_candidates(frame_bgr, self.cfg))
 
-                result = None
-                if candidates:
-                    # A real ball shouldn't sit at the exact same pixel for
-                    # seconds -- if it has, stop trusting proximity to that
-                    # spot (it's more likely a static decoy: a map decoration,
-                    # a standing player, an unmasked UI element) and force a
-                    # fresh whole-frame best-candidate search instead.
-                    stale = self.stale_count >= self.cfg["stale_after_frames"]
-                    if self.prev_ball is None or stale:
-                        result = track_ball.most_circular(candidates)[1:]
-                        self.pending = None
-                    else:
-                        px, py = self.prev_ball[:2]
-                        # Scales with how many frames since the last trusted
-                        # detection, same idea as track_ball.py's batch
-                        # tracker -- keeps live inference from latching onto
-                        # a same-colored decoy (another player's head, a
-                        # skill effect) just because it's the most circular
-                        # blob in a single frame.
-                        max_dist = self.cfg["max_jump_px_per_frame"] * max(1, self.missing_streak + 1)
-                        near = [c for c in candidates
-                                if ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist]
-                        if near:
-                            result = track_ball.closest_to(near, (px, py))[1:]
-                            self.pending = None
-                        else:
-                            # Nothing near the last trusted position. Batch
-                            # tracking can peek at the next recorded frame
-                            # before trusting a big jump; live play can't
-                            # see the future, so instead we wait exactly one
-                            # frame: hold the best candidate as "pending"
-                            # and only trust it once the *next* frame keeps
-                            # finding something near it. A one-off flash --
-                            # a torch, a skill effect -- won't repeat there
-                            # and gets dropped; real ball movement will.
-                            _, cx, cy, cstate = track_ball.most_circular(candidates)
-                            confirm_dist = self.cfg["max_jump_px_per_frame"]
-                            if self.pending is not None and \
-                                    ((cx - self.pending[0]) ** 2 + (cy - self.pending[1]) ** 2) ** 0.5 <= confirm_dist:
-                                result = (cx, cy, cstate)
-                                self.pending = None
-                            else:
-                                self.pending = (cx, cy, cstate)
-
-                if result is None:
+                if ball is None:
+                    if self.missing_streak == 0:
+                        self.missing_since = capture_t
                     self.missing_streak += 1
                     if self.missing_streak >= MISSING_FRAMES_RESET:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
+                    self.steer_camera(None, width, capture_t)
                 else:
                     self.missing_streak = 0
-                    x, y, state = result
+                    x, y, state, radius = ball
                     if self.prev_ball is not None and \
-                            ((x - self.prev_ball[0]) ** 2 + (y - self.prev_ball[1]) ** 2) ** 0.5 <= self.cfg["stale_jitter_px"]:
+                            ((x - self.prev_ball[0]) ** 2 + (y - self.prev_ball[1]) ** 2) ** 0.5 \
+                            <= self.cfg["stale_jitter_px"]:
                         self.stale_count += 1
                     else:
                         self.stale_count = 0
-                    desired = self.predict_actions(x, y, state, center_x, center_y, capture_t, frame_bgr)
+                    self.prev_ball = (x, y)
+
+                    # A turning camera sweeps the whole scene across the
+                    # screen -- that motion isn't the ball's, so restart
+                    # motion history instead of reading it as velocity.
+                    if self.camera.last_active >= self.last_feature_t:
+                        self.features.reset()
+                    row = self.features.update(x, y, state, radius, capture_t, center_x, center_y)
+                    self.last_feature_t = capture_t
+
+                    desired, proba = self.predict_actions(row)
                     self.apply_actions(desired)
+                    self.steer_camera(x, width, capture_t)
+                    if self._log_file is not None:
+                        self.log_frame(capture_t, frame_bgr, ball, row, proba, desired)
 
             elapsed = time.time() - start
             time.sleep(max(0.0, interval - elapsed))
 
 
+def run_camera_test(camera):
+    print("Camera test: switch to Roblox now. Starting in 3 seconds...")
+    time.sleep(3)
+    for name, direction in (("LEFT", -1), ("RIGHT", 1)):
+        print(f"Turning {name} for 1s -- the view should rotate to look {name.lower()}.")
+        end = time.time() + 1.0
+        camera.turn(direction, 1.0, time.time())
+        while time.time() < end:
+            camera.update(time.time())
+            time.sleep(1 / 60)
+        camera.stop()
+        time.sleep(1.0)
+    print("Done. Wrong direction? add --camera-invert. Didn't move? try --camera mouse.")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("model", help="Path to model.joblib from train_model.py")
+    parser.add_argument("model", nargs="?", help="Path to model.joblib from train_model.py")
+    parser.add_argument("--camera", choices=["keys", "mouse", "off"], default="keys",
+                        help="How to turn the camera toward the ball (default: arrow keys)")
+    parser.add_argument("--camera-invert", action="store_true",
+                        help="Flip the camera turn direction")
+    parser.add_argument("--camera-test", action="store_true",
+                        help="Turn the camera left then right to check the setup, then exit")
     parser.add_argument("--log", help="Optional path to write a JSONL diagnostic log "
-                                       "(ball position/velocity, predicted confidences) "
-                                       "for every live-inferred frame while AI is enabled. "
-                                       "Also saves the captured frame images next to it, "
-                                       "in a <log>_frames/ folder, for visual inspection.")
+                                       "(features, predicted confidences, camera) for every "
+                                       "live-inferred frame while AI is enabled. Also saves the "
+                                       "captured frame images into a <log>_frames/ folder.")
     args = parser.parse_args()
 
-    controller = AIController(args.model, log_path=args.log)
+    if args.camera_test:
+        run_camera_test(Camera(args.camera, args.camera_invert,
+                               keyboard.Controller(), mouse.Controller()))
+        return
+    if not args.model:
+        parser.error("Provide model.joblib (or use --camera-test).")
+
+    controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log)
     if args.log:
         print(f"Logging live diagnostics to {args.log} (frames in {controller._log_frames_dir})")
 

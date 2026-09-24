@@ -1,6 +1,7 @@
 """
-Train a small neural network to predict which keys/buttons you'd hold,
-given the ball's position, velocity, and state (idle/targeting).
+Train a small neural network to predict which actions you'd take, given
+the ball's position, motion, apparent size/approach rate, and state
+(idle/targeting).
 
 SETUP (run once):
     pip install scikit-learn pandas joblib
@@ -20,19 +21,14 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report
 
-FEATURE_COLUMNS = [
-    "ball_rel_x", "ball_rel_y", "ball_vel_x", "ball_vel_y",
-    "ball_distance", "ball_closing_speed", "state_targeting",
-]
-LABEL_COLUMNS = [
-    "held_w", "held_a", "held_s", "held_d",
-    "held_mouse_left", "held_mouse_right",
-]
+from build_dataset import LABELS
+from features import FEATURE_COLUMNS
+
+RARE_LABELS = ["held_block", "held_ability"]
 
 
 def load_dataset(path):
     df = pd.read_csv(path)
-    df["state_targeting"] = (df["ball_state"] == "targeting").astype(int)
     df["ball_speed"] = (df["ball_vel_x"] ** 2 + df["ball_vel_y"] ** 2) ** 0.5
     # Sort by session then time, so the time-based split below is meaningful
     df = df.sort_values(["session", "t"]).reset_index(drop=True)
@@ -65,13 +61,21 @@ def main():
     train_df, test_df = time_based_split(df)
     print(f"Train: {len(train_df)} rows, Test: {len(test_df)} rows (last 20% of each session)")
 
+    # An action that never appears in the training data can't be learned
+    # (e.g. ability, until sessions that record the Q key exist), and a
+    # constant-zero label only adds noise -- leave it out until it has data.
+    label_columns = [label for label in LABELS if train_df[label].any()]
+    skipped = [label for label in LABELS if label not in label_columns]
+    if skipped:
+        print(f"No positive examples yet for {skipped} -- not training on them.")
+
     # Blocking/ability are rare compared to movement, so the model can
     # score well by just always predicting "not held." Oversample those
     # rare-but-important rows in the TRAINING set only (never touch the
     # test set, or we'd be grading on an easier, unrealistic test).
-    RARE_LABELS = ["held_mouse_left", "held_mouse_right"]
     OVERSAMPLE_FACTOR = 5
-    rare_rows = train_df[train_df[RARE_LABELS].any(axis=1)]
+    rare = [label for label in RARE_LABELS if label in label_columns]
+    rare_rows = train_df[train_df[rare].any(axis=1)] if rare else train_df.iloc[:0]
     if len(rare_rows) > 0:
         extra = pd.concat([rare_rows] * (OVERSAMPLE_FACTOR - 1), ignore_index=True)
         train_df = pd.concat([train_df, extra], ignore_index=True)
@@ -96,9 +100,9 @@ def main():
               f"-> train set now {len(train_df)} rows")
 
     X_train = train_df[FEATURE_COLUMNS].values
-    y_train = train_df[LABEL_COLUMNS].values
+    y_train = train_df[label_columns].values
     X_test = test_df[FEATURE_COLUMNS].values
-    y_test = test_df[LABEL_COLUMNS].values
+    y_test = test_df[label_columns].values
 
     # Neural nets train much better when inputs are on similar scales --
     # pixel positions/velocities can be in the hundreds, so we normalize.
@@ -116,13 +120,13 @@ def main():
 
     print("\n--- Test set performance (per action) ---")
     y_pred = model.predict(X_test_scaled)
-    print(classification_report(y_test, y_pred, target_names=LABEL_COLUMNS, zero_division=0))
+    print(classification_report(y_test, y_pred, target_names=label_columns, zero_division=0))
 
     joblib.dump({
         "model": model,
         "scaler": scaler,
         "feature_columns": FEATURE_COLUMNS,
-        "label_columns": LABEL_COLUMNS,
+        "label_columns": label_columns,
     }, args.output)
     print(f"Saved trained model to {args.output}")
 

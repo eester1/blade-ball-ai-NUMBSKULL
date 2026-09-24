@@ -53,8 +53,12 @@ JPEG_QUALITY = 80
 # MONITOR_REGION = {"top": 0, "left": 0, "width": 1920, "height": 1080}
 MONITOR_REGION = None
 
-TRACKED_KEYS = {"w", "a", "s", "d"}
-TRACKED_MOUSE_BUTTONS = {"left", "right"}  # left = block/deflect, right = abilities
+# F = block and Q = ability (Blade Ball's default keybinds, shown on the
+# in-game BLOCK/ABILITY buttons). Left click also blocks. Right mouse is
+# recorded too, but it's Roblox's hold-and-drag camera rotation, not an
+# action -- build_dataset.py deliberately doesn't turn it into a label.
+TRACKED_KEYS = {"w", "a", "s", "d", "f", "q"}
+TRACKED_MOUSE_BUTTONS = {"left", "right"}
 
 START_STOP_KEY = keyboard.Key.insert
 QUIT_KEY = keyboard.Key.end

@@ -26,7 +26,8 @@ USAGE:
        python track_ball.py recordings/session_XXXX
 
      This writes ball_tracks.jsonl into that session folder, one line
-     per frame with the detected ball position (or null if not found).
+     per frame with the detected ball position, state (idle/targeting)
+     and apparent radius in pixels (or nulls if not found).
 
   3) Optionally SPOT-CHECK detections visually:
 
@@ -144,12 +145,13 @@ def build_masks(hsv, cfg):
 
 def find_ball_candidates(frame_bgr, cfg):
     """Returns every ball-colored/shaped blob in the frame, as a list of
-    (circularity, x, y, state) -- not just the single best one. Color and
-    shape alone can't tell the real ball apart from other round pale/red
-    things on screen (another player's head, a skill effect), so callers
-    that track the ball over time should disambiguate using where it was
-    last seen (see find_ball_near) rather than blindly trusting whichever
-    candidate happens to be most circular in isolation."""
+    (circularity, x, y, state, radius) -- not just the single best one.
+    radius is the apparent size in pixels (from contour area), which grows
+    as the ball gets closer. Color and shape alone can't tell the real ball
+    apart from other round pale/red things on screen (another player's
+    head, a skill effect), so callers that track the ball over time should
+    disambiguate using where it was last seen (closest_to) rather than
+    blindly trusting whichever candidate is most circular in isolation."""
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     white_mask, red_mask = build_masks(hsv, cfg)
 
@@ -171,48 +173,10 @@ def find_ball_candidates(frame_bgr, cfg):
             M = cv2.moments(c)
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
-            candidates.append((circularity, cx, cy, state))
+            radius = (area / np.pi) ** 0.5
+            candidates.append((circularity, cx, cy, state, radius))
 
     return candidates
-
-
-def find_ball(frame_bgr, cfg):
-    """Returns (x, y, state) for the single most ball-shaped blob, or None.
-    Ignores where the ball was previously -- fine for one-off/tuning use,
-    but prefer find_ball_near when tracking across frames (see its
-    docstring for why)."""
-    candidates = find_ball_candidates(frame_bgr, cfg)
-    if not candidates:
-        return None
-    circularity, x, y, state = max(candidates, key=lambda c: c[0])
-    return x, y, state
-
-
-def find_ball_near(frame_bgr, cfg, prior=None, max_dist=None):
-    """Like find_ball, but when `prior` (x, y) is given, prefers whichever
-    candidate is closest to it -- as long as that candidate is within
-    `max_dist` pixels. This is what actually disambiguates the real ball
-    from another round pale/red object elsewhere on screen: the wrong
-    object might occasionally be *more circular*, but it's essentially
-    never *closer to where the ball just was* than the real ball is.
-    Falls back to plain highest-circularity selection when there's no
-    usable prior, or when nothing is within max_dist of it (ball may have
-    genuinely jumped far, or this is a fresh acquisition)."""
-    candidates = find_ball_candidates(frame_bgr, cfg)
-    if not candidates:
-        return None
-
-    if prior is not None and max_dist is not None:
-        px, py = prior
-        near = [c for c in candidates
-                if ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist]
-        if near:
-            circularity, x, y, state = min(
-                near, key=lambda c: (c[1] - px) ** 2 + (c[2] - py) ** 2)
-            return x, y, state
-
-    circularity, x, y, state = max(candidates, key=lambda c: c[0])
-    return x, y, state
 
 
 def closest_to(candidates, point):
@@ -316,29 +280,29 @@ def run_session(session_dir, cfg, debug, debug_every):
     last_good = None       # (x, y)
     last_good_idx = None   # frame index of last trusted detection
     stale_count = 0        # consecutive accepted frames barely-unchanged in position
-    results = [None] * len(frame_paths)  # final (x, y, state) or None, per frame
+    results = [None] * len(frame_paths)  # final (x, y, state, radius) or None, per frame
 
     for i, candidates in enumerate(raw):
         if not candidates:
             continue
 
         if last_good is None:
-            x, y, state = most_circular(candidates)[1:]
+            x, y, state, radius = most_circular(candidates)[1:]
         else:
             elapsed = i - last_good_idx
             if elapsed > cfg["reset_after_missing_frames"] or stale_count >= cfg["stale_after_frames"]:
-                x, y, state = most_circular(candidates)[1:]
+                x, y, state, radius = most_circular(candidates)[1:]
             else:
                 allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
                 near = [c for c in candidates
                         if ((c[1] - last_good[0]) ** 2 + (c[2] - last_good[1]) ** 2) ** 0.5 <= allowed]
                 if near:
-                    x, y, state = closest_to(near, last_good)[1:]
+                    x, y, state, radius = closest_to(near, last_good)[1:]
                 else:
                     # Nothing near the last trusted position -- could be
                     # real fast movement, could be a decoy. Only trust it
                     # if the next detected frame keeps going near it.
-                    cx, cy, cstate = most_circular(candidates)[1:]
+                    cx, cy, cstate, cradius = most_circular(candidates)[1:]
                     confirmed = False
                     lookahead_end = min(i + 1 + cfg["confirm_lookahead_frames"], len(raw))
                     for j in range(i + 1, lookahead_end):
@@ -355,7 +319,7 @@ def run_session(session_dir, cfg, debug, debug_every):
                     if not confirmed:
                         rejected_count += 1
                         continue  # implausible jump, no confirmation -- drop this frame
-                    x, y, state = cx, cy, cstate
+                    x, y, state, radius = cx, cy, cstate, cradius
 
         if last_good is not None and \
                 ((x - last_good[0]) ** 2 + (y - last_good[1]) ** 2) ** 0.5 <= cfg["stale_jitter_px"]:
@@ -366,13 +330,16 @@ def run_session(session_dir, cfg, debug, debug_every):
         found_count += 1
         last_good = (x, y)
         last_good_idx = i
-        results[i] = (x, y, state)
+        results[i] = (x, y, state, radius)
 
     with open(out_path, "w") as out_file:
         for i, fp in enumerate(frame_paths):
             result = results[i]
-            x, y, state = result if result else (None, None, None)
-            out_file.write(json.dumps({"frame": fp.name, "ball_x": x, "ball_y": y, "state": state}) + "\n")
+            x, y, state, radius = result if result else (None, None, None, None)
+            out_file.write(json.dumps({
+                "frame": fp.name, "ball_x": x, "ball_y": y, "state": state,
+                "ball_r": None if radius is None else round(radius, 2),
+            }) + "\n")
 
             if debug and i % debug_every == 0:
                 annotated = cv2.imread(str(fp))

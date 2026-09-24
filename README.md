@@ -11,16 +11,17 @@ There is no game-engine integration and no memory reading — everything is done
 ```
 record_gameplay.py          track_ball.py            build_dataset.py        train_model.py         play_live.py
 ─────────────────────       ─────────────────        ──────────────────      ─────────────────      ─────────────────
-Screenshot + input     -->  Detect ball position  --> Merge into one     --> Train a small     --> Detect ball live,
-logger while you play       (color/shape based)        dataset.csv           MLP classifier         predict + press
-                             per recorded session                             (model.joblib)         keys/mouse live
+Screenshot + input     -->  Detect ball position, --> Merge into one     --> Train a small     --> Detect ball live,
+logger while you play       state and size             dataset.csv           MLP classifier         turn camera to keep
+                            per recorded session       (features.py)         (model.joblib)         it in view, predict
+                                                                                                    + press actions
 ```
 
 1. **Record** — `record_gameplay.py` captures your screen at a fixed rate while logging which keys/mouse buttons are held, producing one folder per session under `recordings/`.
-2. **Track** — `track_ball.py` re-processes each recorded session's frames offline to find the ball's pixel position (and whether it's idle/white or targeting/red) in each frame, using color thresholding + shape filtering + temporal heuristics (see [Ball Detection](#ball-detection-track_ballpy)).
-3. **Build dataset** — `build_dataset.py` merges the recorded inputs and tracked ball positions from one or more sessions into a single `dataset.csv`, computing derived features (relative position, velocity in px/s, distance, closing speed).
-4. **Train** — `train_model.py` trains a small multi-label neural network (`model.joblib`) to predict which keys/buttons you'd hold, given the ball's state.
-5. **Play live** — `play_live.py` runs the same ball-detection code in real time, feeds the same features into the trained model, and presses/releases keys and mouse buttons to match its predictions.
+2. **Track** — `track_ball.py` re-processes each recorded session's frames offline to find the ball's pixel position, whether it's idle (white) or targeting (red), and its apparent size in each frame, using color thresholding + shape filtering + temporal heuristics (see [Ball Detection](#ball-detection-track_ballpy)).
+3. **Build dataset** — `build_dataset.py` merges the recorded inputs and tracked ball positions from one or more sessions into a single `dataset.csv`, computing features with `features.py` (see [Features](#features-featurespy)).
+4. **Train** — `train_model.py` trains a small multi-label neural network (`model.joblib`) to predict which actions you'd take, given the ball's state.
+5. **Play live** — `play_live.py` runs the same ball detection and the same `features.py` code in real time, turns the camera to keep the ball on screen, and presses/releases keys and mouse buttons to match the model's predictions.
 
 ## Setup
 
@@ -43,6 +44,7 @@ python record_gameplay.py
   - `frames/000001.jpg, 000002.jpg, ...` — one screenshot per captured frame
   - `inputs.jsonl` — one JSON line per frame: `{"frame": "...", "t": <unix timestamp>, "held": [...]}`
 - Play normally. Record several sessions across different maps and rounds — the model can only learn patterns that actually appear in your recordings, including rare ones like blocking and using your ability.
+- Records W/A/S/D, **F** (block) and **Q** (ability) — Blade Ball's default keybinds — plus left and right mouse. Left click also blocks. Right mouse is recorded but not used as a training label: in Roblox, holding right mouse and dragging rotates the camera, so it's camera movement, not an action. (Sessions recorded before F/Q tracking was added have no F blocks or Q abilities in them.)
 - Tunables at the top of the file: `FPS` (capture rate), `MONITOR_REGION` (defaults to the whole primary monitor), `TRACKED_KEYS`/`TRACKED_MOUSE_BUTTONS`.
 
 ### 2. Tune ball color detection (once, or whenever detection looks wrong)
@@ -59,7 +61,7 @@ Opens a window with sliders for the white-ball (idle) and red-ball (targeting) H
 python track_ball.py recordings/session_XXXX
 ```
 
-Writes `ball_tracks.jsonl` into that session folder — one line per frame with the detected `ball_x`, `ball_y`, and `state` (`"idle"` or `"targeting"`), or `null` if nothing was found that frame.
+Writes `ball_tracks.jsonl` into that session folder — one line per frame with the detected `ball_x`, `ball_y`, `state` (`"idle"` or `"targeting"`) and `ball_r` (apparent radius in pixels), or `null`s if nothing was found that frame.
 
 Optional visual spot-check:
 
@@ -75,17 +77,15 @@ Saves every 20th frame, annotated with a circle around the detection, into `sess
 python build_dataset.py recordings/session_A recordings/session_B ... -o dataset.csv
 ```
 
-(Or `recordings/*/` to include everything.) Merges inputs + ball tracks from each session, drops frames where the ball wasn't detected, and computes:
+(Or `recordings/*/` to include everything.) Merges inputs + ball tracks from each session, drops frames where the ball wasn't detected, and writes one row per frame: the raw detection (`ball_x`, `ball_y`, `ball_state`), every feature from [Features](#features-featurespy), and one label column per action:
 
-| Column | Meaning |
+| Label | 1 when… |
 |---|---|
-| `ball_x`, `ball_y` | Raw detected pixel position |
-| `ball_rel_x`, `ball_rel_y` | Position relative to screen center |
-| `ball_vel_x`, `ball_vel_y` | Velocity in **pixels per second** (real elapsed time between detected frames, not frame count — matters because live inference doesn't run at a perfectly steady rate) |
-| `ball_distance` | Distance from screen center |
-| `ball_closing_speed` | Positive = ball closing in on you, negative = moving away |
-| `ball_state` | `"idle"` or `"targeting"` |
-| `held_w`/`a`/`s`/`d`/`mouse_left`/`mouse_right` | 1 if held that frame, else 0 (the training labels) |
+| `held_w`, `held_a`, `held_s`, `held_d` | that movement key is held |
+| `held_block` | left mouse **or** F is held (both block) |
+| `held_ability` | Q is held |
+
+Labels describe what an action *does* rather than which button did it, so blocking with F and blocking with a click teach the model the same thing. Sessions tracked before radius tracking existed are skipped with a message to re-run `track_ball.py` on them.
 
 ### 5. Train the model
 
@@ -93,14 +93,23 @@ python build_dataset.py recordings/session_A recordings/session_B ... -o dataset
 python train_model.py dataset.csv -o model.joblib
 ```
 
-- Trains an `MLPClassifier` (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), on 7 input features and 6 output labels (see [Model](#model-train_modelpy)).
+- Trains an `MLPClassifier` (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), on the 10 features from `features.py` (see [Model](#model-train_modelpy)).
+- Skips any label with no positive examples yet (e.g. `held_ability` until you've recorded sessions where you pressed Q) — a label that's always 0 can't be learned.
 - Splits each session's data by time (last 20% held out as test set, not a random split — avoids testing on near-duplicate frames the model basically already saw).
-- Oversamples rare rows in the *training* set only: frames with blocking/ability held (5x), and frames in the fastest 15% of ball speed (3x) — both are underrepresented relative to how much they matter.
+- Oversamples rare rows in the *training* set only: frames with block/ability held (5x), and frames in the fastest 15% of ball speed (3x) — both are underrepresented relative to how much they matter.
 - Prints a per-action classification report (precision/recall/F1) on the held-out test set.
 
 Re-run this any time you've recorded more sessions and rebuilt a bigger `dataset.csv` — it always trains fresh from scratch.
 
-### 6. Play live
+### 6. Check the camera setup (once)
+
+```
+python play_live.py --camera-test
+```
+
+Switch to Roblox within 3 seconds. The camera should turn to look left for a second, then right. If it turns the wrong way, add `--camera-invert` to your play command. If it doesn't move at all, run `python play_live.py --camera-test --camera mouse` to try right-mouse dragging instead of the arrow keys. See [Camera control](#camera-control).
+
+### 7. Play live
 
 ```
 python play_live.py model.joblib
@@ -108,7 +117,8 @@ python play_live.py model.joblib
 
 - **Insert** toggles AI control on/off (starts off). **End** quits immediately and always releases every key/button first, so nothing gets stuck held down.
 - **Safety:** while ON, this sends real keyboard/mouse input to whatever window is focused. Keep Roblox focused and your hand near the keyboard the first few times, in case it does something unwanted — End stops everything instantly.
-- Optional diagnostics: `--log path.jsonl` writes one JSON line per live-inferred frame (ball position/velocity/state, the model's per-action confidence, actions taken) **and** saves every captured frame as a JPEG into `path_frames/`. This is the main tool for root-causing "why did it do that" after a session — see [Diagnosing bad behavior](#diagnosing-bad-behavior).
+- `--camera keys|mouse|off` and `--camera-invert` pick how the camera is turned (whatever worked in step 6).
+- Optional diagnostics: `--log path.jsonl` writes one JSON line per live-inferred frame (every feature, the model's per-action confidence, actions taken, camera turn direction) **and** saves every captured frame as a JPEG into `path_frames/`. This is the main tool for root-causing "why did it do that" after a session — see [Diagnosing bad behavior](#diagnosing-bad-behavior).
 
 ## Ball detection (`track_ball.py`)
 
@@ -125,17 +135,49 @@ Because a single frame's color/shape signal alone can't reliably tell the real b
 | `max_jump_px_per_frame`, `reset_after_missing_frames`, `confirm_lookahead_frames` | A detection far from the last trusted position isn't rejected outright — it's trusted if the *next* detected frame keeps going near it (real fast movement/bounces continue, a one-off flash doesn't) |
 | `stale_after_frames`, `stale_jitter_px` | If the trusted position hasn't moved at all for this many frames, stop trusting proximity to it and force a fresh whole-frame search — catches long lock-ons onto something static (a decoration, a standing player) that a one-frame check can't |
 
-`track_ball.py` (batch, processing a whole recorded session) and `play_live.py` (real-time) both use this same candidate list + proximity/staleness logic, via shared functions (`find_ball_candidates`, `find_ball_near`, `closest_to`, `most_circular`) — the batch version can additionally peek one frame into the future to confirm a jump, which live inference can't do (it uses a one-frame "pending" delay instead).
+`track_ball.py` (batch, processing a whole recorded session) and `play_live.py` (real-time) both use this same candidate list + proximity/staleness logic, via shared functions (`find_ball_candidates`, `closest_to`, `most_circular`) — the batch version can additionally peek one frame into the future to confirm a jump, which live inference can't do (it uses a one-frame "pending" delay instead). Each candidate also carries its apparent radius (from contour area), which feeds the depth features below.
+
+## Features (`features.py`)
+
+Both `build_dataset.py` and `play_live.py` compute features through the same `FeatureTracker`, so training and live play can't disagree about what a feature means.
+
+| Feature | Meaning |
+|---|---|
+| `ball_rel_x`, `ball_rel_y` | Position relative to screen center |
+| `ball_vel_x`, `ball_vel_y` | Screen velocity in **pixels per second** (real elapsed time, not frame count — live inference doesn't run at a perfectly steady rate) |
+| `ball_distance` | Distance from screen center |
+| `ball_closing_speed` | Positive = ball moving toward screen center, negative = away |
+| `state_targeting` | 1 when the ball is red (targeting) |
+| `ball_radius` | Apparent radius in pixels (smoothed) — bigger means closer |
+| `ball_radius_rate` | How fast the radius is growing, in px/s — positive means approaching |
+| `ball_ttc` | Estimated time to contact in seconds (radius ÷ growth rate, capped at 3 s) |
+
+Screen position alone can't tell how *close* the ball is — a ball at screen center can be next to you or across the arena. Its apparent size can: it grows as the ball approaches, and radius ÷ growth rate estimates how many seconds until it arrives. That's the cue that says *when* to block, which position and velocity only approximate.
+
+Motion history (velocity, radius growth) restarts after gaps longer than 1 second, and live play also restarts it whenever the camera turns — a turning camera sweeps the whole scene across the screen, which would otherwise read as ball velocity.
 
 ## Model (`train_model.py`)
 
-A small multi-label MLP — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees 7 numeric features:
+A small multi-label MLP — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees the 10 numeric features above.
 
-**Inputs:** `ball_rel_x`, `ball_rel_y`, `ball_vel_x`, `ball_vel_y`, `ball_distance`, `ball_closing_speed`, `state_targeting`
-
-**Outputs (independent per-action confidence, each with its own decision threshold in `play_live.py`):** `held_w`, `held_a`, `held_s`, `held_d`, `held_mouse_left` (block), `held_mouse_right` (ability)
+**Outputs (independent per-action confidence, each with its own decision threshold in `play_live.py`):** `held_w`, `held_a`, `held_s`, `held_d`, `held_block`, `held_ability` (only labels that have examples in the training data — see step 5).
 
 Features are normalized with a `StandardScaler` fit on the training data (saved alongside the model in `model.joblib`, so live inference scales consistently).
+
+## Camera control
+
+The model can only react to a ball it can see, so `play_live.py` turns the camera horizontally to keep the ball on screen:
+
+- **Ball visible, inside the middle half of the screen:** the camera doesn't move. This dead zone keeps the ball's on-screen position meaningful to the model, which learned from recordings where the ball moved freely around the screen rather than being pinned to center.
+- **Ball visible, past the dead zone toward the left/right edge:** a short turn toward it, longer the closer it is to the edge.
+- **Ball lost for ~half a second:** keep turning toward the side it was last seen on, to find it again — for up to 6 seconds, after which it's probably between rounds.
+
+Two ways to turn, chosen with `--camera`:
+
+- `keys` (default) — Roblox's Left/Right arrow keys, which rotate the default camera.
+- `mouse` — holds right mouse and drags, sent as raw relative mouse input (Windows `SendInput`). Roblox reads camera drags from raw mouse deltas, which ordinary cursor movement doesn't reliably produce.
+
+Tunables (`CAMERA_*` at the top of `play_live.py`): dead-zone width, turn duration per unit of offset, search timing, and mouse drag speed. The camera only turns horizontally; there's no up/down control yet.
 
 ## Diagnosing bad behavior
 
@@ -150,6 +192,7 @@ This gives you, for every frame the AI acted on: the detected ball position/velo
 ## Known Limitations
 
 - **Ball detection can still lock onto decoys.** Map decorations (e.g. lit torches), other players' head cosmetics, and similar red/white objects can pass the same color/shape filter as the real ball. Heuristic fixes (proximity tracking, a staleness watchdog, one-frame confirmation) catch most cases but not all — a decoy that's visually stable for a couple of consecutive frames can still slip through. The durable fix would be a small trained classifier scoring candidate crops instead of picking by circularity/proximity alone (data for this is nearly free to generate from existing recordings — every non-selected candidate in an already-tracked frame is an automatic negative example). Not yet built.
-- **No camera control.** `play_live.py` never moves the mouse to look around — whatever direction Roblox's camera happens to be facing is what it sees. Since movement keys are camera-relative, this can bias which direction it moves. Not yet addressed; needs either steering the camera toward the ball (which would fight the model's existing position-based features) or toward a fixed reference point (which needs a way to know that direction that this vision-only pipeline doesn't currently have).
-- **Model accuracy is modest**, especially for blocking and rarer actions — recall on `held_mouse_left` (block) and `held_s` fluctuates in the 0.15–0.45 range across retrains, and `held_mouse_right` has very few training examples. This is a data-volume problem more than an architecture problem: record more sessions, especially ones where you actually block/use your ability a fair amount, and retrain.
+- **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally, and the arrow-key/right-drag methods haven't been verified in Blade Ball yet — run `--camera-test` first.
+- **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do.
+- **Model accuracy is modest**, especially for blocking and rarer actions — block recall has fluctuated in the 0.15–0.45 range across retrains. This is a data-volume problem more than an architecture problem: record more sessions, especially ones where you actually block/use your ability a fair amount, and retrain.
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.
