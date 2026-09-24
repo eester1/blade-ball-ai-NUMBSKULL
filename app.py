@@ -149,7 +149,7 @@ class App:
         self.log = tk.BooleanVar(value=saved.get("log", True))
         ttk.Checkbutton(play, text="Save a log of this run", variable=self.log).grid(row=0, column=3, sticky="w")
         self.auto = tk.BooleanVar(value=saved.get("auto", True))
-        ttk.Checkbutton(play, text="Play rounds by itself (waits in the lobby between rounds)",
+        ttk.Checkbutton(play, text="Auto-play (plays each round, waits in the lobby between rounds)",
                         variable=self.auto, command=self.update_play_hint).grid(
             row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
