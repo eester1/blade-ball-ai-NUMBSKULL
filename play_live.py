@@ -122,6 +122,11 @@ BLOCK_LEAD_S = 0.1
 # ...but never more than this much closer, so a speed misread mid camera
 # turn can't set off a block while the ball is still far away.
 BLOCK_MAX_LEAD_PX = 150
+# A ball coming at you head-on barely moves on screen -- it just grows (in
+# one death its radius went 12 -> 14 -> 17 -> 24 in three frames), so its
+# size is judged ahead the same way, from how fast it's growing, by at
+# most half again its current size.
+BLOCK_MAX_GROWTH_LEAD = 0.5
 
 # Your character's red "targeted" tint can blink off while the ball is
 # still coming. For this long after last seeing it, keep counting as
@@ -175,6 +180,13 @@ CAMERA_SEARCH_TURN_S = 0.12
 # Mouse mode: sweep this much faster than normal turns while searching --
 # while you're targeted, every frame spent looking is a frame less to block.
 CAMERA_SEARCH_SPEED = 1.5
+# A ball this small on screen is far away. While it isn't coming for you,
+# it's followed calmly -- no leading, no quick search, no fast sweeps: a
+# far ball bouncing between players on opposite sides swung the camera
+# back and forth, and every sweep overshoots a bit (the game shows a turn
+# about a frame late). If it does turn on you, your red highlight starts
+# the fast search anyway.
+CAMERA_FAR_RADIUS = 10
 # ...but stop after this long: it's probably between rounds, not lost.
 CAMERA_SEARCH_MAX_S = 6.0
 # Drag speed in "mouse" mode, in mouse counts per second.
@@ -184,13 +196,15 @@ CAMERA_MOUSE_SPEED = 900
 CAMERA_REANCHOR_PX = 250
 
 
-def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0):
+def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0, growth=0.0):
     """Final block decision for this frame (see BLOCK_* above).
     approach_speed: how fast the ball is closing in on your character on
-    screen, in px/s (0 if unknown)."""
+    screen, in px/s; growth: how fast its radius is growing, in px/s (0 if
+    unknown)."""
     x, y, state, radius = ball
     distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
     distance -= min(max(approach_speed, 0.0) * BLOCK_LEAD_S, BLOCK_MAX_LEAD_PX)
+    radius += min(max(growth, 0.0) * BLOCK_LEAD_S, radius * BLOCK_MAX_GROWTH_LEAD)
     close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= BLOCK_MIN_RADIUS) or \
         (distance <= BLOCK_BIG_MAX_CHAR_DIST and radius >= BLOCK_BIG_RADIUS)
     return close and (model_wants or (targeted and state == "targeting"))
@@ -328,10 +342,12 @@ class AIController:
         self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
         self.last_offset = 0.0    # where the ball was heading on screen (-1..1 = left..right edge)
         self.searching = False    # the camera is sweeping to find a lost ball
+        self.last_far = False     # the ball was far away and not after you (CAMERA_FAR_RADIUS)
         self.prev_motion = None   # (t, x, distance to character) of the last detection
         self.screen_vx = 0.0      # ball's sideways speed on screen, px/s
         self.approach = 0.0       # how fast the ball closes in on your character, px/s
         self.motion_t = 0.0       # when those two were last measured
+        self.growth = 0.0         # how fast the ball's radius grows, px/s
         self.missing_streak = 0
         self.missing_since = None
         self.stale_count = 0      # consecutive frames barely-unchanged in position
@@ -478,12 +494,14 @@ class AIController:
         the ball coming at you even when the track broke between them (it
         does, when it rushes in during a camera turn), so how fast it's
         closing in is still measured -- that's what times the block."""
-        x, y, state = ball[0], ball[1], ball[2]
+        x, y, state, radius = ball
         distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
         prev = self.prev_motion
         recent = prev is not None and 0 < t - prev[0] <= 0.2
         continued = recent and self.track_len >= 1
         incoming = recent and targeted and state == prev[3] == "targeting"
+        # A turn hardly changes the ball's size, so that's measured either way.
+        self.growth = (radius - prev[4]) / (t - prev[0]) if continued or incoming else 0.0
         if continued and self.camera.last_active < prev[0] - CAMERA_SETTLE_S:
             dt = t - prev[0]
             self.screen_vx = (x - prev[1]) / dt
@@ -493,12 +511,13 @@ class AIController:
             self.approach = (prev[2] - distance) / (t - prev[0])
         elif not continued or t - self.motion_t > MOTION_HOLD_S:
             self.screen_vx = self.approach = 0.0
-        self.prev_motion = (t, x, distance, state)
+        self.prev_motion = (t, x, distance, state, radius)
 
     # --- camera --------------------------------------------------------
 
-    def search(self, now):
-        self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now, CAMERA_SEARCH_SPEED)
+    def search(self, now, fast):
+        self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now,
+                         CAMERA_SEARCH_SPEED if fast else 1.0)
         self.searching = True
 
     def steer_camera(self, ball, width, now, targeted):
@@ -515,7 +534,7 @@ class AIController:
         # real one even when it doesn't look red, and turning away from it
         # was exactly what sent the camera the wrong way in live testing.
         if targeted and not stable:
-            self.search(now)
+            self.search(now, fast=True)
             return
         if stable:
             # Found it: stop sweeping at once. A sweep left running after the
@@ -524,8 +543,11 @@ class AIController:
             if self.searching:
                 self.camera.stop()
                 self.searching = False
-            # Where it's heading, not just where it is (see CAMERA_LEAD_S).
-            predicted_x = ball[0] + self.screen_vx * CAMERA_LEAD_S
+            # Where it's heading, not just where it is (see CAMERA_LEAD_S) --
+            # unless it's far away and not after you (CAMERA_FAR_RADIUS).
+            self.last_far = ball[3] < CAMERA_FAR_RADIUS and not targeted
+            lead = 0.0 if self.last_far else CAMERA_LEAD_S
+            predicted_x = ball[0] + self.screen_vx * lead
             offset = (predicted_x - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
             self.last_offset = offset
             self.last_seen_side = -1 if offset < 0 else 1
@@ -535,10 +557,10 @@ class AIController:
                                    CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
                 self.camera.turn(self.last_seen_side, duration, now)
         elif ball is None:
-            exited = abs(self.last_offset) >= CAMERA_EXIT_OFFSET
+            exited = abs(self.last_offset) >= CAMERA_EXIT_OFFSET and not self.last_far
             after = CAMERA_SEARCH_AFTER_EXIT_FRAMES if exited else CAMERA_SEARCH_AFTER_FRAMES
             if self.missing_streak >= after and now - self.missing_since <= CAMERA_SEARCH_MAX_S:
-                self.search(now)
+                self.search(now, fast=False)
         # else: a detection that just jumped here -- often a decoy (a sparkle,
         # a lantern, another player's cosmetic), so don't swing the camera
         # toward it until it's held up for a few frames.
@@ -574,6 +596,7 @@ class AIController:
             "camera": self.camera.direction,
             "screen_vx": round(self.screen_vx, 1),
             "approach": round(self.approach, 1),
+            "growth": round(self.growth, 1),
             "track_len": self.track_len,
             "self_red": round(self.self_red, 4),
         }
@@ -655,7 +678,7 @@ class AIController:
 
                     desired, proba = self.predict_actions(row)
                     if should_block("block" in desired, ball, targeted, character_xy,
-                                    self.approach):
+                                    self.approach, self.growth):
                         desired = desired | {"block"}
                     else:
                         desired = desired - {"block"}
