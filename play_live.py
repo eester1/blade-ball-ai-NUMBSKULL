@@ -90,6 +90,25 @@ MOUSE_ACTIONS = {"block": mouse.Button.left}
 TAP_ACTIONS = {"block": 0.35}
 TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 
+# The model is good at *whether* to block (targeted, red ball coming) but
+# not at *when*: live, it tapped with the ball still ~1.1s away, the block
+# was used up, and a second tap then came too late / during Blade Ball's
+# block cooldown. So a block is only let through once the ball is close:
+# apparent radius at least BLOCK_MIN_RADIUS (~0.4s out on a normal-speed
+# ball in that log), or -- for a fast ball, which closes the last stretch in
+# fewer frames -- at least BLOCK_FAST_MIN_RADIUS with an estimated time to
+# contact under BLOCK_FAST_TTC_S. Raise these if it still blocks early,
+# lower them if it starts blocking too late.
+BLOCK_MIN_RADIUS = 20
+BLOCK_FAST_MIN_RADIUS = 14
+BLOCK_FAST_TTC_S = 0.4
+
+# Your character's red "targeted" tint can blink off while the ball is
+# still coming -- e.g. during your own block animation. For this long after
+# last seeing it, keep counting as targeted while the tracked ball is still
+# red, instead of the model suddenly deciding the danger has passed.
+TARGET_LATCH_S = 1.5
+
 TOGGLE_KEY = keyboard.Key.insert
 QUIT_KEY = keyboard.Key.end
 
@@ -121,6 +140,16 @@ CAMERA_SEARCH_TURN_S = 0.12
 CAMERA_SEARCH_MAX_S = 6.0
 # Drag speed in "mouse" mode, in mouse counts per second.
 CAMERA_MOUSE_SPEED = 900
+# Mouse mode: once the dragged cursor is this many pixels from the anchor,
+# hop it back (see Camera.update) so it never leaves the game screen.
+CAMERA_REANCHOR_PX = 250
+
+
+def close_enough_to_block(row):
+    """Whether the ball is close enough for a block to land (see BLOCK_*)."""
+    radius = row["ball_radius"]
+    return radius >= BLOCK_MIN_RADIUS or \
+        (radius >= BLOCK_FAST_MIN_RADIUS and row["ball_ttc"] <= BLOCK_FAST_TTC_S)
 
 
 class _MOUSEINPUT(ctypes.Structure):
@@ -148,15 +177,19 @@ class Camera:
     """Non-blocking camera turning: turn() starts or extends a timed turn,
     update() (called every loop iteration) keeps it going and ends it."""
 
-    def __init__(self, method, invert, kb, ms):
+    def __init__(self, method, invert, kb, ms, anchor=None):
         self.method = method
         self.invert = invert
         self.kb = kb
         self.ms = ms
+        # Mouse mode: where the cursor is kept -- the game screen's center if
+        # given, else wherever the cursor was when a turn started.
+        self.anchor = anchor
         self.direction = 0      # -1 = turning left, +1 = right, 0 = idle
         self.until = 0.0
         self.last_active = 0.0  # last time the view was moving
         self._last_move = None  # mouse mode: time of the last drag step
+        self._anchor = None     # mouse mode: anchor for the current turn
 
     def turn(self, direction, duration, now):
         if self.method == "off":
@@ -180,6 +213,16 @@ class Camera:
             if dx:
                 move_mouse_relative(dx, 0)
             self._last_move = now
+            # The drag really moves the cursor, which would otherwise wander
+            # off the game screen (onto another monitor, where a block click
+            # would land in some other window). Hop it back to the anchor
+            # with right mouse released, so the hop doesn't turn the camera.
+            x, y = self.ms.position
+            if abs(x - self._anchor[0]) > CAMERA_REANCHOR_PX or \
+                    abs(y - self._anchor[1]) > CAMERA_REANCHOR_PX:
+                self.ms.release(mouse.Button.right)
+                self.ms.position = self._anchor
+                self.ms.press(mouse.Button.right)
         self.last_active = now
         if now >= self.until:
             self.stop()
@@ -191,12 +234,15 @@ class Camera:
             self.kb.release(keyboard.Key.left if self.direction < 0 else keyboard.Key.right)
         elif self.method == "mouse":
             self.ms.release(mouse.Button.right)
+            self.ms.position = self._anchor
         self.direction = 0
 
     def _press(self, direction, now):
         if self.method == "keys":
             self.kb.press(keyboard.Key.left if direction < 0 else keyboard.Key.right)
         elif self.method == "mouse":
+            self._anchor = self.anchor or self.ms.position
+            self.ms.position = self._anchor
             self.ms.press(mouse.Button.right)
             self._last_move = now
 
@@ -236,6 +282,7 @@ class AIController:
         self.pending = None       # candidate awaiting next-frame confirmation
         self.track_len = 0        # consecutive frames the ball was followed smoothly
         self.self_red = 0.0       # latest self-highlight score (see track_ball)
+        self.targeted_at = None   # (time, score) of the last frame you were highlighted
 
         self.last_tap = {}  # tap action -> time.time() it was last tapped
 
@@ -260,6 +307,7 @@ class AIController:
                 self.missing_streak = 0
                 self.prev_ball = None
                 self.pending = None
+                self.targeted_at = None
             print(f"[AI {'ENABLED' if state else 'disabled'}]")
             if not state:
                 self.release_all()
@@ -433,6 +481,7 @@ class AIController:
         region = self._sct.monitors[1]
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
+        self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
 
         print("Insert = toggle AI on/off, End = quit.")
         print("Starting in OFF state -- press Insert when you're ready.")
@@ -447,8 +496,14 @@ class AIController:
                 capture_t = time.time()
                 frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
-                targeted = self.self_red >= self.cfg["self_target_threshold"]
+                if self.self_red >= self.cfg["self_target_threshold"]:
+                    self.targeted_at = (capture_t, self.self_red)
                 ball = self.select_ball(*track_ball.find_ball_candidates(frame_bgr, self.cfg))
+                if self.self_red < self.cfg["self_target_threshold"] and self.targeted_at \
+                        and capture_t - self.targeted_at[0] <= TARGET_LATCH_S \
+                        and ball is not None and ball[2] == "targeting":
+                    self.self_red = self.targeted_at[1]  # tint blinked off; ball still coming
+                targeted = self.self_red >= self.cfg["self_target_threshold"]
                 row = proba = None
                 desired = tapped = set()
 
@@ -482,6 +537,8 @@ class AIController:
                     self.last_feature_t = capture_t
 
                     desired, proba = self.predict_actions(row)
+                    if "block" in desired and not close_enough_to_block(row):
+                        desired = desired - {"block"}
                     tapped = self.apply_actions(desired)
                     self.steer_camera(ball, width, capture_t, targeted)
 

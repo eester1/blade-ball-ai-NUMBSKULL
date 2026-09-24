@@ -118,6 +118,8 @@ python play_live.py model.joblib
 - **Insert** toggles AI control on/off (starts off). **End** quits immediately and always releases every key/button first, so nothing gets stuck held down.
 - **Safety:** while ON, this sends real keyboard/mouse input to whatever window is focused. Keep Roblox focused and your hand near the keyboard the first few times, in case it does something unwanted — End stops everything instantly.
 - `--camera keys|mouse|off` and `--camera-invert` pick how the camera is turned (whatever worked in step 6).
+- **Block waits until the ball is close.** The model is good at *whether* to block but not *when* — live, it tapped with the ball still ~1.1 s away, used the block up, and died. A block is only let through once the ball's apparent radius is ≥ 20 px (~0.4 s out on a normal-speed ball), or ≥ 14 px with an estimated time to contact under 0.4 s for fast balls (`BLOCK_MIN_RADIUS`, `BLOCK_FAST_MIN_RADIUS`, `BLOCK_FAST_TTC_S` — raise them if it still blocks early, lower them if it blocks late).
+- **Targeted memory.** Your red "targeted" tint can blink off while the ball is still coming (e.g. during a block animation); for 1.5 s after last seeing it (`TARGET_LATCH_S`) you keep counting as targeted as long as the tracked ball is still red.
 - Movement keys are held for as long as the model wants them. Block is **tapped** instead, and re-tapped at most every 0.35 s (`TAP_ACTIONS`) while the model keeps wanting it — Blade Ball's block only triggers at the moment of the press, so holding it from an early press would mean it never fires again when the ball actually arrives.
 - Per-action confidence thresholds are in `THRESHOLDS` (block is 0.4: on held-out data that fires on about the same share of targeting frames as you actually blocked).
 - Refuses to start with a `model.joblib` trained on an older label set — rebuild the dataset and retrain after updating.
@@ -189,7 +191,7 @@ The model can only react to a ball it can see, so `play_live.py` turns the camer
 Two ways to turn, chosen with `--camera`:
 
 - `keys` (default) — Roblox's Left/Right arrow keys, which rotate the default camera. Works, but turns slowly: in testing, swinging around to find a ball that was targeting you from behind took almost a second — about as long as the ball took to arrive.
-- `mouse` — holds right mouse and drags, sent as raw relative mouse input (Windows `SendInput`). Roblox reads camera drags from raw mouse deltas, which ordinary cursor movement doesn't reliably produce. Turn speed is set by `CAMERA_MOUSE_SPEED` (and your Roblox mouse sensitivity), so it can turn much faster than the arrow keys.
+- `mouse` — holds right mouse and drags, sent as raw relative mouse input (Windows `SendInput`). Roblox reads camera drags from raw mouse deltas, which ordinary cursor movement doesn't reliably produce. Turn speed is set by `CAMERA_MOUSE_SPEED` (and your Roblox mouse sensitivity), so it can turn much faster than the arrow keys. The drag really moves the cursor, so it's kept near the center of the game screen: whenever it drifts more than `CAMERA_REANCHOR_PX` it hops back (with right mouse briefly released, so the hop doesn't turn the camera), and it returns to center when a turn ends — otherwise it wanders onto a second monitor, where a block click would land in another window.
 
 Tunables (`CAMERA_*` at the top of `play_live.py`): dead-zone width, turn duration per unit of offset, search timing, and mouse drag speed. The camera only turns horizontally; there's no up/down control yet.
 
