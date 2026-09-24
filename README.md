@@ -395,7 +395,7 @@ With **Save a log of this run** ticked (`--log`), the AI saves **every frame it 
 | Waiting in the lobby (Auto) | 1 screenshot per second | ~2 GB per hour |
 | The log file itself (`.jsonl`) | one line per frame | ~30 MB per hour, small by comparison |
 
-So a whole night of play with logging on is **roughly 100–200 GB**. For example, 8 hours with about two-thirds of the time in rounds comes to about 150 GB.
+So a whole night of play with logging on is **roughly 100–200 GB**. For example, 8 hours with about two-thirds of the time in rounds comes to about 160 GB.
 
 **What to do:**
 
