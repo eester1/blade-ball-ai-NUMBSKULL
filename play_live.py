@@ -94,16 +94,23 @@ TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 # model gets wrong in both directions: it tapped with the ball ~1.1s away
 # (block used up, then died), and right at contact it often *doesn't* want
 # to block, since in your recordings you'd already pressed earlier. So:
-# - a block only goes through once the ball is within BLOCK_MAX_CHAR_DIST
-#   pixels of your character on screen. Whatever direction it comes from, a
-#   ball reaching you ends up at your character's spot on screen; its
-#   apparent size isn't a reliable stand-in (a ball near the camera looks
-#   big while far from you; one from above/behind hits you looking small).
-#   Every successful live block was 121-191px away, every contact 113-195px.
+# - a block only goes through once the ball is close to your character.
+#   Whatever direction it comes from, a ball reaching you ends up at your
+#   character's spot on screen: every successful live block was 121-191px
+#   away, every contact 113-195px. But screen distance alone isn't enough
+#   -- a ball far away in front of you sits just above your character on
+#   screen (practice mode: ~190px away at radius 8-10, and it spammed block
+#   for 3s) -- so it also has to look big enough to be near: radius at
+#   least BLOCK_MIN_RADIUS (every contact seen was >= 15). And a ball
+#   coming at you head-on stays up the screen until the last instant, so a
+#   *big* ball (>= BLOCK_BIG_RADIUS) counts from BLOCK_BIG_MAX_CHAR_DIST.
 # - once it's that close, block if the model wants to, *or* if you're
 #   targeted and the ball is red -- that combination alone is enough.
-# Raise it if it blocks too late, lower it if it blocks too early.
+# Raise the distances if it blocks too late, lower them if too early.
 BLOCK_MAX_CHAR_DIST = 200
+BLOCK_MIN_RADIUS = 14
+BLOCK_BIG_RADIUS = 45
+BLOCK_BIG_MAX_CHAR_DIST = 320
 
 # Your character's red "targeted" tint can blink off while the ball is
 # still coming -- e.g. during your own block animation. For this long after
@@ -149,10 +156,11 @@ CAMERA_REANCHOR_PX = 250
 
 def should_block(model_wants, ball, targeted, character_xy):
     """Final block decision for this frame (see BLOCK_* above)."""
-    x, y, state, _ = ball
+    x, y, state, radius = ball
     distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
-    return distance <= BLOCK_MAX_CHAR_DIST and \
-        (model_wants or (targeted and state == "targeting"))
+    close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= BLOCK_MIN_RADIUS) or \
+        (distance <= BLOCK_BIG_MAX_CHAR_DIST and radius >= BLOCK_BIG_RADIUS)
+    return close and (model_wants or (targeted and state == "targeting"))
 
 
 class _MOUSEINPUT(ctypes.Structure):

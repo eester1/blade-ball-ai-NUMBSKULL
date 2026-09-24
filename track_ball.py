@@ -52,6 +52,11 @@ DEFAULT_CONFIG = {
     # White/grey idle ball: low saturation, high brightness
     "white_sat_max": 60,
     "white_val_min": 180,
+    # Stricter brightness used only inside white blobs that failed the ball
+    # checks, to split the ball out of a pale hazy sky it merged with (barn
+    # map: sky brightness 157-197, ball 238). ~95% of tracked white balls in
+    # the recordings are at least this bright.
+    "white_split_val_min": 215,
     # Red targeting ball: red wraps around hue 0, so two ranges
     "red_hue_low_max": 10,
     "red_hue_high_min": 170,
@@ -239,47 +244,78 @@ def find_ball_candidates(frame_bgr, cfg):
         # or above you at contact, not centered on your body.
         return own_x0 <= x <= own_x1 and own_y0 <= y <= own_y1
 
+    def prepare(mask):
+        mask = apply_ui_mask(mask, cfg)
+        return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
     candidates, cores = [], []
     for mask, state in ((white_mask, "idle"), (red_mask, "targeting")):
-        mask = apply_ui_mask(mask, cfg)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < cfg["min_area"]:
+        mask = prepare(mask)
+        failed = []  # blobs that failed the ball checks
+        for c in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+            blob = _blob(c, mask, cfg)
+            if blob is None:
                 continue
-            perimeter = cv2.arcLength(c, True)
-            if perimeter == 0:
+            if blob["ok"]:
+                if not on_own_character(blob["x"], blob["y"]):
+                    candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
                 continue
-            circularity = 4 * np.pi * area / (perimeter * perimeter)
-            hull = cv2.convexHull(c)
-            hull_area = cv2.contourArea(hull)
-            hull_perimeter = cv2.arcLength(hull, True)
-            hull_circularity = 4 * np.pi * hull_area / (hull_perimeter * hull_perimeter)
-            round_enough = (circularity >= cfg["min_circularity"] or
-                            hull_circularity >= cfg["min_hull_circularity"]) \
-                and area / hull_area >= cfg["min_solidity"]
-            bx, by, bw, bh = cv2.boundingRect(c)
-            outline = np.zeros((bh, bw), np.uint8)
-            cv2.drawContours(outline, [c], -1, 255, -1, offset=(-bx, -by))
-            solid = cv2.bitwise_and(mask[by:by + bh, bx:bx + bw], outline)
-            inside = cv2.countNonZero(outline)
-            fill = cv2.countNonZero(solid) / inside if inside else 0.0
+            failed.append(c)
+            core = _round_core(mask, blob["solid"], blob["bx"], blob["by"], blob["area"], cfg)
+            if core is not None and not on_own_character(core[0], core[1]):
+                cx, cy, radius = core
+                cores.append((cfg["min_circularity"], cx, cy, state, radius))
 
-            if round_enough and fill >= cfg["min_fill"] and area <= cfg["max_area"]:
-                M = cv2.moments(c)
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                if not on_own_character(cx, cy):
-                    candidates.append((max(circularity, hull_circularity), cx, cy, state,
-                                       (area / np.pi) ** 0.5))
-            else:
-                core = _round_core(mask, solid, bx, by, area, cfg)
-                if core is not None and not on_own_character(core[0], core[1]):
-                    cx, cy, radius = core
-                    cores.append((cfg["min_circularity"], cx, cy, state, radius))
+        # A pale, washed-out sky (or anything bright and grey) also passes the
+        # white filter, and a ball in front of it merges into one huge blob
+        # that fails the shape check -- on a map with a hazy sky that hides
+        # the ball entirely. The ball is still clearly *brighter* than such a
+        # background, so look inside failed white blobs again with a stricter
+        # brightness cutoff; normal (unmerged) detection is left as is.
+        if state == "idle" and failed:
+            strict = prepare(cv2.inRange(
+                hsv, (0, 0, cfg["white_split_val_min"]), (180, cfg["white_sat_max"], 255)))
+            for c in cv2.findContours(strict, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+                blob = _blob(c, strict, cfg)
+                if blob is None or not blob["ok"] or on_own_character(blob["x"], blob["y"]):
+                    continue
+                if any(cv2.pointPolygonTest(f, (blob["x"], blob["y"]), False) >= 0 for f in failed):
+                    candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
 
     return candidates, cores
+
+
+def _blob(contour, mask, cfg):
+    """Shape measurements for one contour, and whether it passes as a ball
+    ("ok"); None if it's too small to consider."""
+    area = cv2.contourArea(contour)
+    if area < cfg["min_area"]:
+        return None
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter == 0:
+        return None
+    circularity = 4 * np.pi * area / (perimeter * perimeter)
+    hull = cv2.convexHull(contour)
+    hull_area = cv2.contourArea(hull)
+    hull_perimeter = cv2.arcLength(hull, True)
+    hull_circularity = 4 * np.pi * hull_area / (hull_perimeter * hull_perimeter)
+    round_enough = (circularity >= cfg["min_circularity"] or
+                    hull_circularity >= cfg["min_hull_circularity"]) \
+        and area / hull_area >= cfg["min_solidity"]
+    bx, by, bw, bh = cv2.boundingRect(contour)
+    outline = np.zeros((bh, bw), np.uint8)
+    cv2.drawContours(outline, [contour], -1, 255, -1, offset=(-bx, -by))
+    solid = cv2.bitwise_and(mask[by:by + bh, bx:bx + bw], outline)
+    inside = cv2.countNonZero(outline)
+    fill = cv2.countNonZero(solid) / inside if inside else 0.0
+    M = cv2.moments(contour)
+    return {
+        "ok": round_enough and fill >= cfg["min_fill"] and area <= cfg["max_area"],
+        "x": int(M["m10"] / M["m00"]), "y": int(M["m01"] / M["m00"]),
+        "circularity": max(circularity, hull_circularity),
+        "radius": (area / np.pi) ** 0.5,
+        "area": area, "solid": solid, "bx": bx, "by": by,
+    }
 
 
 def _round_core(mask, solid, bx, by, blob_area, cfg):
