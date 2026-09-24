@@ -39,6 +39,7 @@ python app.py
 
 Opens a window with buttons for everything below, so you don't need to type commands:
 
+- **Banner** at the top — says in big colored text what's happening right now. Starting the AI or the recorder only *loads* it; it does nothing until you press **Insert** in Roblox, so the banner says "loaded but NOT playing yet" (yellow) until you do, then "PLAYING" (green) or "RECORDING" (red), and "PAUSED" when you press Insert again.
 - **Play** — pick the camera method (mouse / keys / off), invert, and whether to save a log; *Start AI* and *Test camera*.
 - **Record your own gameplay** — starts the recorder.
 - **Update the AI from recordings** — tracks the ball in any new recordings, rebuilds the dataset and retrains the model. Tick *Re-track all recordings* after detection changes, and *Also retrain the ball detector* after new recordings.
