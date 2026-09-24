@@ -51,6 +51,10 @@ CONFIG_PATH = Path("color_config.json")
 DEFAULT_CONFIG = {
     # White/grey idle ball: low saturation, high brightness
     "white_sat_max": 60,
+    # ...but on screens where more than white_busy_share of the play area
+    # passes (sand maps), only up to this saturation counts (see build_masks).
+    "white_busy_share": 0.08,
+    "white_busy_sat_max": 35,
     "white_val_min": 180,
     # Stricter brightness used only inside white blobs that failed the ball
     # checks, to split the ball out of a pale hazy sky it merged with (barn
@@ -223,6 +227,16 @@ def build_masks(hsv, cfg):
         (0, 0, cfg["white_val_min"]),
         (180, cfg["white_sat_max"], 255),
     )
+    # Sand, and some cloudy skies, are pale enough to pass the white filter
+    # over a big part of the screen (sand maps: 17-23% of it, a stone map:
+    # ~2%), which buries the white ball and makes decoys. When that much
+    # passes, only accept nearly colorless pixels: sand is warm-tinted
+    # (saturation ~52), the ball barely (<= 18 for 95% of balls).
+    h, w = white_mask.shape
+    busy = white_mask[int(0.1 * h):int(0.9 * h), int(0.2 * w):].mean() / 255
+    if busy > cfg["white_busy_share"]:
+        white_mask = cv2.inRange(
+            hsv, (0, 0, cfg["white_val_min"]), (180, cfg["white_busy_sat_max"], 255))
     red_low = cv2.inRange(
         hsv,
         (0, cfg["red_sat_min"], cfg["red_val_min"]),
