@@ -45,7 +45,7 @@ Opens a window with buttons for everything below, so you don't need to type comm
 - **How did it go?** — score the latest run or all runs (see [Scoring runs](#scoring-runs-score_logspy)), open the logs folder.
 - **Stop** — ends whatever is running by pressing End (the scripts' own safe-quit key, which releases every held key/button), force-closing only if it doesn't respond.
 
-The in-game hotkeys still work while anything runs: **Insert** toggles, **End** quits. The window shows each script's output as it runs. The rest of this README describes the scripts it runs.
+The in-game hotkeys still work while anything runs: **Insert** toggles, **End** quits. The window shows each script's output as it runs. Only one thing runs at a time — while it does, the other buttons are greyed out and a message says to press Stop first (scoring works any time). Only one panel is open at a time, too: opening a new one closes the old one, stopping whatever it was running. The rest of this README describes the scripts it runs.
 
 ## Full workflow
 

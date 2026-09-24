@@ -14,9 +14,11 @@ Insert toggles, End quits.
 import json
 import os
 import queue
+import socket
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -94,10 +96,14 @@ class App:
                         variable=self.retrain_detector).grid(row=1, column=1, sticky="w", padx=8)
 
         # --- Results -----------------------------------------------------
+        # These only read log files, so they work any time -- even while the
+        # AI is playing -- instead of waiting for the running script.
         results = ttk.LabelFrame(main, text="How did it go?", padding=8)
         results.pack(fill="x", **pad)
-        self.add_button(results, "Score latest run", lambda: self.score(all_logs=False)).grid(row=0, column=0)
-        self.add_button(results, "Score all runs", lambda: self.score(all_logs=True)).grid(row=0, column=1, padx=8)
+        ttk.Button(results, text="Score latest run",
+                   command=lambda: self.score(all_logs=False)).grid(row=0, column=0)
+        ttk.Button(results, text="Score all runs",
+                   command=lambda: self.score(all_logs=True)).grid(row=0, column=1, padx=8)
         ttk.Button(results, text="Open logs folder", command=self.open_logs).grid(row=0, column=2)
 
         # --- Status / output ---------------------------------------------
@@ -107,6 +113,9 @@ class App:
         ttk.Label(bar, textvariable=self.status).pack(side="left")
         self.stop_button = ttk.Button(bar, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="right")
+        # Says why the other buttons are greyed out while something runs.
+        self.hint = tk.StringVar(value="")
+        tk.Label(main, textvariable=self.hint, fg="#c05800", anchor="w").pack(fill="x", padx=8)
 
         self.text = ScrolledText(main, height=18, width=100, font=("Consolas", 9))
         self.text.pack(fill="both", expand=True, **pad)
@@ -120,38 +129,50 @@ class App:
         self.busy_buttons.append(button)
         return button
 
-    def run(self, title, steps):
+    def run(self, title, steps, what):
         """Run steps -- a list of (description, argv) -- one after another
-        in the background, streaming their output into the window."""
+        in the background, streaming their output into the window. `what`
+        names it in the "press Stop" hint (e.g. "The AI")."""
         self.stopping = False
         self.set_busy(True, title)
+        self.hint.set(f"{what} is running -- press Stop (or End in Roblox) before using the "
+                      f"other buttons. Scoring works any time.")
         threading.Thread(target=self._run_steps, args=(steps,), daemon=True).start()
 
     def _run_steps(self, steps):
         env = dict(os.environ, PYTHONUNBUFFERED="1")
         ok = True
-        for description, argv in steps:
-            if self.stopping:
-                break
-            self.output.put(f"\n>>> {description}\n")
-            self.proc = subprocess.Popen(
-                argv, cwd=HERE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            for line in self.proc.stdout:
-                self.output.put(line)
-            if self.proc.wait() != 0 and not self.stopping:
-                self.output.put(f"\n!!! {description} failed (exit code {self.proc.returncode})\n")
-                ok = False
-                break
-        self.proc = None
-        self.output.put(("done", "Stopped." if self.stopping else "Done." if ok else "Failed -- see output."))
+        try:
+            for description, argv in steps:
+                if self.stopping:
+                    break
+                self.output.put(f"\n>>> {description}\n")
+                self.proc = subprocess.Popen(
+                    argv, cwd=HERE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                for line in self.proc.stdout:
+                    self.output.put(line)
+                if self.proc.wait() != 0 and not self.stopping:
+                    self.output.put(f"\n!!! {description} failed (exit code {self.proc.returncode})\n")
+                    ok = False
+                    break
+        except Exception as e:  # e.g. the script couldn't be started at all
+            self.output.put(f"\n!!! {e}\n")
+            ok = False
+        finally:
+            # Always unlock the buttons, whatever happened.
+            self.proc = None
+            self.output.put(("done", "Stopped." if self.stopping else "Done." if ok else "Failed -- see output."))
 
     def pump_output(self):
         try:
             while True:
                 item = self.output.get_nowait()
-                if isinstance(item, tuple):
+                if isinstance(item, tuple) and item[0] == "close":
+                    self.on_close()  # a newer panel was opened
+                elif isinstance(item, tuple):
                     self.set_busy(False, item[1])
+                    self.hint.set("")
                 else:
                     self.text.insert("end", item)
                     self.text.see("end")
@@ -201,17 +222,18 @@ class App:
         if self.log.get():
             argv.append("--log")
         self.run("AI running -- switch to Roblox and press Insert to turn it on.",
-                 [("Starting the AI", argv)])
+                 [("Starting the AI", argv)], "The AI")
 
     def test_camera(self):
         argv = [PYTHON, "play_live.py", "--camera-test", "--camera", self.camera.get()]
         if self.invert.get():
             argv.append("--camera-invert")
-        self.run("Camera test -- switch to Roblox now.", [("Testing the camera", argv)])
+        self.run("Camera test -- switch to Roblox now.", [("Testing the camera", argv)],
+                 "The camera test")
 
     def start_recorder(self):
         self.run("Recorder running -- switch to Roblox and press Insert to start recording.",
-                 [("Starting the recorder", [PYTHON, "record_gameplay.py"])])
+                 [("Starting the recorder", [PYTHON, "record_gameplay.py"])], "The recorder")
 
     def update_model(self):
         steps = [(f"Tracking the ball in {s.name}", [PYTHON, "track_ball.py", str(s)])
@@ -223,11 +245,18 @@ class App:
                 str(s) for s in (HERE / "recordings").glob("*/")), "-o", "dataset.csv"]),
             ("Training the model", [PYTHON, "train_model.py", "dataset.csv", "-o", "model.joblib"]),
         ]
-        self.run(f"Updating the model ({len(steps)} steps)...", steps)
+        self.run(f"Updating the model ({len(steps)} steps)...", steps, "Updating the model")
 
     def score(self, all_logs):
+        """Runs alongside whatever else is running (it only reads logs)."""
         argv = [PYTHON, "score_logs.py"] + (["--all"] if all_logs else [])
-        self.run("Scoring...", [("Scoring runs", argv)])
+
+        def work():
+            result = subprocess.run(
+                argv, cwd=HERE, capture_output=True, text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.output.put("\n>>> Scoring runs\n" + result.stdout + result.stderr)
+        threading.Thread(target=work, daemon=True).start()
 
     def open_logs(self):
         logs = HERE / "live_logs"
@@ -235,9 +264,51 @@ class App:
         os.startfile(logs)
 
 
+# The open panel listens on this local port, so a newly opened one can tell
+# it to close -- only one panel runs at a time.
+INSTANCE_PORT = 48213
+
+
+def close_previous_panel():
+    """If a panel is already open, ask it to close and wait until it has."""
+    try:
+        with socket.create_connection(("127.0.0.1", INSTANCE_PORT), timeout=1) as conn:
+            conn.sendall(b"close")
+    except OSError:
+        return  # none open
+    # It stops whatever it's running first (up to ~3.5s), then exits.
+    deadline = time.time() + 6
+    while time.time() < deadline:
+        time.sleep(0.2)
+        try:
+            socket.create_connection(("127.0.0.1", INSTANCE_PORT), timeout=0.2).close()
+        except OSError:
+            return
+
+
+def listen_for_newer_panel(app):
+    server = socket.socket()
+    try:
+        server.bind(("127.0.0.1", INSTANCE_PORT))
+    except OSError:
+        return  # port taken by something else -- just skip the one-panel check
+    server.listen()
+
+    def serve():
+        while True:
+            conn, _ = server.accept()
+            with conn:
+                if conn.recv(16) == b"close":
+                    app.output.put(("close",))  # handled on the window's own thread
+
+    threading.Thread(target=serve, daemon=True).start()
+
+
 def main():
+    close_previous_panel()
     root = tk.Tk()
-    App(root)
+    app = App(root)
+    listen_for_newer_panel(app)
     root.mainloop()
 
 
