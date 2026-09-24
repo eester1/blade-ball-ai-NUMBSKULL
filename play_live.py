@@ -13,12 +13,13 @@ SETUP (run once, if you haven't already):
 USAGE:
     python play_live.py model.joblib
 
-    - Plays by itself: it plays each round, waits in the lobby after you
-      die or the round ends, and starts again when the next round begins
-      (it can tell from Blade Ball's menu -- see game_state.py). It only
-      ever acts while the Roblox window is the active one.
-      --no-auto turns that off: then it starts OFF and Insert turns it on.
-    - Insert pauses/resumes it.
+    - Starts OFF: press Insert in Roblox to turn it on, and again to pause.
+    - --auto: plays by itself instead -- it plays each round, waits in the
+      lobby after you die or the round ends, and starts again when the next
+      round begins (it can tell from Blade Ball's menu -- see game_state.py).
+      Insert still pauses/resumes it. With --vote classic it also votes for
+      that gamemode each time it's in the lobby.
+    - It only ever acts while the Roblox window is the active one.
     - End quits immediately (--quit-key picks another key). This always
       releases every key/button first, so nothing gets left stuck held down.
 
@@ -156,6 +157,12 @@ DEFAULT_QUIT_KEY = "end"
 LOBBY_CHECK_EVERY = 3
 LOBBY_CONFIRM_CHECKS = 2
 ROUND_CONFIRM_CHECKS = 3
+# Auto vote: while in the lobby, look for the chosen gamemode's vote button
+# this often (frames), and click it once per visit to the lobby.
+VOTE_CHECK_EVERY = 8
+# While logging, save a lobby frame this often (seconds), so what the lobby
+# looked like (vote screen included) can be checked afterwards.
+LOBBY_FRAME_EVERY_S = 1.0
 
 # What's shown for each phase when it changes (the control panel watches
 # for these lines).
@@ -365,7 +372,7 @@ class Camera:
 
 class AIController:
     def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None,
-                 use_classifier=True, auto=True, quit_key=DEFAULT_QUIT_KEY):
+                 use_classifier=True, auto=False, quit_key=DEFAULT_QUIT_KEY, vote=None):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
@@ -391,6 +398,16 @@ class AIController:
         # Plays by itself between rounds if the lobby can be recognized.
         self.lobby = game_state.LobbyDetector() if auto else None
         self.enabled = self.lobby is not None  # auto mode starts armed
+        # Auto vote (needs auto mode, which knows when you're in the lobby).
+        self.vote_mode = vote if auto else None
+        self.vote_button = None
+        if self.vote_mode:
+            try:
+                self.vote_button = game_state.VoteButton(self.vote_mode)
+            except FileNotFoundError as e:
+                print(f"[auto vote off: {e} -- see README, Auto vote]")
+        self.voted = False           # clicked the vote this lobby visit
+        self.last_lobby_frame_t = 0.0
         self.phase = None          # "playing", "lobby", "no_focus" or None (not yet known)
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
@@ -478,12 +495,12 @@ class AIController:
         if phase != "playing":
             self.release_all()
             self.reset_tracking()
+        if phase == "playing":
+            self.voted = False  # vote again next time in the lobby
         # Without auto mode it can't tell rounds from the lobby.
         print("[AI playing]" if phase == "playing" and self.lobby is None
               else PHASE_MESSAGES[phase])
-        if self._log_file is not None:
-            self._log_file.write(json.dumps({"t": t, "event": phase}) + "\n")
-            self._log_file.flush()
+        self.log_event(t, phase)
 
     def check_round(self, frame_bgr, t):
         """Auto mode: pause in the lobby, play when a round starts."""
@@ -499,6 +516,34 @@ class AIController:
             self.set_phase("lobby", t)
         elif self.round_streak >= ROUND_CONFIRM_CHECKS:
             self.set_phase("playing", t)
+
+    def in_lobby(self, frame_bgr, t, region):
+        """Auto mode, while waiting in the lobby: vote, and keep a few frames."""
+        if self.vote_button is not None and not self.voted and \
+                self.frame_count % VOTE_CHECK_EVERY == 0:
+            spot = self.vote_button.find(frame_bgr)
+            if spot is not None:
+                # Click it. The cursor is free in the lobby; put it back after.
+                back = self.ms.position
+                self.ms.position = (region["left"] + int(spot[0]), region["top"] + int(spot[1]))
+                time.sleep(0.05)
+                self.ms.click(mouse.Button.left)
+                time.sleep(0.05)
+                self.ms.position = back
+                self.voted = True
+                print(f"[voted for {self.vote_mode}]")
+                self.log_event(t, "vote")
+        if self._log_frames_dir is not None and t - self.last_lobby_frame_t >= LOBBY_FRAME_EVERY_S:
+            self.last_lobby_frame_t = t
+            name = f"{self._log_frame_idx:06d}.jpg"
+            cv2.imwrite(str(self._log_frames_dir / name), frame_bgr)
+            self._log_frame_idx += 1
+            self.log_event(t, "lobby_frame", frame=name)
+
+    def log_event(self, t, event, **extra):
+        if self._log_file is not None:
+            self._log_file.write(json.dumps({"t": t, "event": event, **extra}) + "\n")
+            self._log_file.flush()
 
     # --- action press/release -----------------------------------------
 
@@ -753,6 +798,8 @@ class AIController:
                     self.check_round(frame_bgr, capture_t)
                 else:
                     self.set_phase("playing", capture_t)
+                if self.phase == "lobby":
+                    self.in_lobby(frame_bgr, capture_t, region)
                 if self.phase != "playing":
                     time.sleep(max(0.0, interval - (time.time() - start)))
                     continue
@@ -853,9 +900,12 @@ def main():
                              "save the captured frames into a <log>_frames/ folder. With no "
                              "name, a new timestamped file is made in live_logs/ each run, "
                              "so earlier logs are never overwritten.")
-    parser.add_argument("--no-auto", action="store_true",
-                        help="Don't pause by itself in the lobby: start OFF and only play while "
-                             "toggled on with Insert")
+    parser.add_argument("--auto", action="store_true",
+                        help="Play by itself: play each round, wait in the lobby between rounds, "
+                             "start again when the next round begins (default: start OFF, "
+                             "Insert toggles)")
+    parser.add_argument("--vote", choices=["none", *game_state.VOTE_MODES], default="none",
+                        help="With --auto: vote for this gamemode each time in the lobby")
     parser.add_argument("--quit-key", default=DEFAULT_QUIT_KEY,
                         help="Key that quits the AI (default: end). E.g. home, delete, "
                              "page_down, f8")
@@ -876,8 +926,9 @@ def main():
         parser.error("Provide model.joblib (or use --camera-test).")
 
     controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
-                              use_classifier=not args.no_classifier, auto=not args.no_auto,
-                              quit_key=args.quit_key)
+                              use_classifier=not args.no_classifier, auto=args.auto,
+                              quit_key=args.quit_key,
+                              vote=None if args.vote == "none" else args.vote)
     print("Ball classifier: " + ("on" if controller.scorer else
                                  "off" if args.no_classifier else "not trained yet (off)"))
     if args.log:

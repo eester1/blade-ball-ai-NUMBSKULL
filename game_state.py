@@ -71,3 +71,48 @@ class LobbyDetector:
     def in_lobby(self, frame_bgr):
         """True when you're not playing a round (lobby, dead, spectating)."""
         return self.score(frame_bgr) >= THRESHOLD
+
+
+# --- Gamemode vote ---------------------------------------------------------
+# Between rounds Blade Ball lets players vote for the next gamemode. Auto can
+# click one for you: it looks for a picture of that mode's vote button,
+# assets/vote_<mode>.png, anywhere on screen.
+VOTE_MODES = ("classic",)
+VOTE_THRESHOLD = 0.8
+
+
+def vote_template_path(mode):
+    return Path(__file__).resolve().parent / "assets" / f"vote_{mode}.png"
+
+
+class VoteButton:
+    """Finds one gamemode's vote button on screen."""
+
+    def __init__(self, mode):
+        self.mode = mode
+        template = cv2.imread(str(vote_template_path(mode)))
+        if template is None:
+            raise FileNotFoundError(f"missing {vote_template_path(mode)}")
+        self._template = template
+        self._templates = {}  # frame height -> scaled templates
+
+    def _templates_for(self, frame_h):
+        if frame_h not in self._templates:
+            base = frame_h / 1080 * WORK_SCALE
+            self._templates[frame_h] = [
+                cv2.resize(self._template, None, fx=base * s, fy=base * s,
+                           interpolation=cv2.INTER_AREA) for s in SIZES]
+        return self._templates[frame_h]
+
+    def find(self, frame_bgr):
+        """(x, y) of the button's center in frame pixels, or None."""
+        small = cv2.resize(frame_bgr, None, fx=WORK_SCALE, fy=WORK_SCALE,
+                           interpolation=cv2.INTER_AREA)
+        best, best_xy = 0.0, None
+        for t in self._templates_for(frame_bgr.shape[0]):
+            result = cv2.matchTemplate(small, t, cv2.TM_CCOEFF_NORMED)
+            _, score, _, (x, y) = cv2.minMaxLoc(result)
+            if score > best:
+                best = score
+                best_xy = ((x + t.shape[1] / 2) / WORK_SCALE, (y + t.shape[0] / 2) / WORK_SCALE)
+        return best_xy if best >= VOTE_THRESHOLD else None

@@ -9,7 +9,7 @@ There is no game-engine integration and no memory reading — everything is done
 ## Features
 
 - **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
-- **[Auto-play](#auto-play)** — start it once and it plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins.
+- **[Auto](#auto)** — tick it and the AI plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins. It can also vote for the Classic gamemode in the lobby for you.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
 - **Only acts in Roblox** — it sends input only while the Roblox window is active, so it never types into another program.
 - **Learns from you** — record your own games; the AI copies what you do in each situation.
@@ -34,7 +34,7 @@ logger while you play       state and size             dataset.csv           MLP
 2. **Track** — `track_ball.py` re-processes each recorded session's frames offline to find the ball's pixel position, whether it's idle (white) or targeting (red), and its apparent size in each frame, using color thresholding + shape filtering + temporal heuristics (see [Ball Detection](#ball-detection-track_ballpy)).
 3. **Build dataset** — `build_dataset.py` merges the recorded inputs and tracked ball positions from one or more sessions into a single `dataset.csv`, computing features with `features.py` (see [Features](#features-featurespy)).
 4. **Train** — `train_model.py` trains a small multi-label neural network (`model.joblib`) to predict which actions you'd take, given the ball's state.
-5. **Play live** — `play_live.py` runs the same ball detection and the same `features.py` code in real time, turns the camera to keep the ball on screen, and presses/releases keys and mouse buttons to match the model's predictions. With [Auto-play](#auto-play), `game_state.py` tells it when you're in a round and when you're in the lobby.
+5. **Play live** — `play_live.py` runs the same ball detection and the same `features.py` code in real time, turns the camera to keep the ball on screen, and presses/releases keys and mouse buttons to match the model's predictions. With [Auto](#auto), `game_state.py` tells it when you're in a round and when you're in the lobby.
 
 ## Setup
 
@@ -64,7 +64,7 @@ This opens a window with a button for everything, so you never have to type the 
   | blue — *AI is waiting in the lobby* | You died or the round ended; it starts again by itself when the next round begins |
   | yellow — *AI is ON but waiting for Roblox* | Another window is active; it only plays while Roblox is the active window |
   | yellow — *AI is PAUSED* | You pressed Insert; press it again to resume |
-  | yellow — *loaded but NOT playing yet* | The recorder (or the AI with *Auto-play* unticked) is waiting for you to press **Insert** in Roblox |
+  | yellow — *loaded but NOT playing yet* | The recorder (or the AI without *Auto*) is waiting for you to press **Insert** in Roblox |
   | red — *RECORDING* | Your gameplay is being recorded |
   | blue | Camera test or model update in progress |
 
@@ -72,7 +72,8 @@ This opens a window with a button for everything, so you never have to type the 
   - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
   - **Invert camera** — tick this if the camera test turns the wrong way.
   - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored and problems diagnosed. Leave it on.
-  - **Auto-play** (ticked by default) — the AI plays each round, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto-play](#auto-play)). Untick it to switch the AI on and off yourself with Insert instead.
+  - **Auto** (unticked every time the panel opens) — tick it and the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Left unticked, you switch the AI on and off yourself with Insert.
+  - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -96,15 +97,21 @@ Only one script runs at a time. While one is running, the other buttons are grey
 
 ### Let the AI play
 
-1. Pick a **Stop key** (End is the default) and press **Start AI**.
-2. Click into Roblox. From here it runs by itself:
-   - **In a round** the banner is green and the AI plays.
-   - **When you die or the round ends** you're back in the lobby. The AI stops pressing anything, and the banner turns blue: *waiting in the lobby*.
-   - **When the next round starts** it notices, and plays again.
-3. Press **Insert** to pause it whenever you want to play yourself, and again to resume. Press your **stop key** in Roblox, or **Stop** in the panel, to quit.
+1. Pick a **Stop key** (End is the default) and press **Start AI**. The banner turns yellow: the AI is loaded but **not playing yet**.
+2. Click into Roblox and press **Insert**. The banner turns green, and the AI is playing.
+3. Press **Insert** again to pause it, whenever you want to play yourself. Press your **stop key** in Roblox, or **Stop** in the panel, to quit.
 4. Afterwards, press **Score latest run** to see how often it got targeted, blocked and survived.
 
-**How it knows where you are:** Blade Ball's left-hand menu shows a green **TRADE** button whenever you're not in a round (in the lobby, in the practice area, or a moment after you die) and hides it while you're alive in a round. `game_state.py` looks for that button. On every saved frame so far it told the two apart without a single mistake.
+### Let it play round after round (Auto)
+
+1. Tick **Auto**, and optionally set **Auto vote** to `Classic`. Then press **Start AI**.
+2. Click into Roblox. From here it runs by itself:
+   - **In a round** the banner is green and the AI plays.
+   - **When you die or the round ends** you're back in the lobby. The AI stops pressing anything, and the banner turns blue: *waiting in the lobby*. With Auto vote on, it votes for Classic.
+   - **When the next round starts** it notices, and plays again.
+3. **Insert** still pauses and resumes it, and your **stop key** or **Stop** quits.
+
+Auto starts unticked every time the panel opens, so the AI never plays unattended unless you choose it that time. See [Auto](#auto) for how it works.
 
 **Safety:** the AI only sends input while the **Roblox window is the active window**. Click into any other window, like this panel, and it lets go of everything and waits, with the banner saying so. It won't type into other programs by accident.
 
@@ -220,7 +227,8 @@ Switch to Roblox within 3 seconds. The camera should turn to look left for a sec
 python play_live.py model.joblib
 ```
 
-- **Plays rounds by itself:** it plays while you're in a round, and waits in the lobby after you die or the round ends (see `game_state.py`). `--no-auto` switches that off: it then starts off, and **Insert** turns it on. **Insert** always pauses and resumes it.
+- **Starts off:** **Insert** turns it on, and pauses and resumes it.
+- **`--auto`** — plays rounds by itself instead: it plays while you're in a round, and waits in the lobby after you die or the round ends (see [Auto](#auto)). Add `--vote classic` to also vote for Classic each time it's in the lobby.
 - **End** quits immediately (`--quit-key home`, `f8` and so on for a different key) and always releases every key/button first, so nothing gets stuck held down.
 - It only sends input while the Roblox window is the active window.
 - **Safety:** while ON, this sends real keyboard/mouse input to whatever window is focused. Keep Roblox focused and your hand near the keyboard the first few times, in case it does something unwanted — End stops everything instantly.
@@ -300,9 +308,9 @@ A small multi-label MLP — no vision component. `track_ball.py` handles "seeing
 
 Features are normalized with a `StandardScaler` fit on the training data (saved alongside the model in `model.joblib`, so live inference scales consistently).
 
-## Auto-play
+## Auto
 
-Auto-play lets you start the AI once and leave it: it plays each round, sits out the time in the lobby, and joins back in by itself when the next round starts. It's on by default. In the panel it's the **Auto-play** tick box; from the command line, `python play_live.py model.joblib` uses it and `--no-auto` turns it off.
+Auto lets you start the AI once and leave it: it plays each round, sits out the time in the lobby, and joins back in by itself when the next round starts. It's **off unless you turn it on**: in the panel, tick **Auto** (it starts unticked every time the panel opens); from the command line, add `--auto`.
 
 ### What it does
 
@@ -341,7 +349,16 @@ With **Save a log of this run** on, the log records each switch between playing,
 
 - **Stuck on "waiting for Roblox" while you're in the game:** the Roblox window's title on your machine doesn't contain "Roblox". Change `roblox_focused()` in `play_live.py`.
 - **Doesn't notice the lobby or rounds:** Blade Ball may have changed its menu. Take a screenshot in the lobby, crop the TRADE button out of it, and save it over `assets/trade_button.png`.
-- To play without it, untick **Auto-play** (or use `--no-auto`). The AI then starts off, and Insert turns it on and off.
+- To play without it, leave **Auto** unticked (or leave out `--auto`). The AI then starts off, and Insert turns it on and off.
+
+### Auto vote
+
+Between rounds, Blade Ball lets players vote for the next gamemode. With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** vote button on screen and clicks it once. It moves the cursor there, clicks, and puts the cursor back. It votes again in the next lobby visit, after the round. Gamemodes are random, so Classic is the only choice for now. The default is `None`, which never clicks anything.
+
+It finds the button from a picture of it, `assets/vote_classic.png`, anywhere on screen. **That picture isn't in the repo yet**, because the vote screen hasn't been captured yet. Until it's there, Auto vote says *"auto vote off: missing assets/vote_classic.png"* and does nothing. To add it:
+
+1. Run the AI with **Auto** and **Save a log of this run** on, and let it sit in the lobby while the vote is showing. In the lobby it saves one screenshot per second into the run's `_frames` folder. You can also take your own screenshot of the vote screen.
+2. Crop just the **Classic** vote button out of a screenshot at full size, and save it as `assets/vote_classic.png`.
 
 ## Camera control
 
@@ -398,5 +415,5 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
 - **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from a handful of live runs; odd approach angles or map lighting may need further tuning — `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
-- **Auto-play depends on Blade Ball's menu.** It recognises the lobby from the green TRADE button, so a game update that moves, recolours or renames that button would break it until the button picture (`assets/trade_button.png`) is replaced. It also assumes the Roblox window's title contains "Roblox".
+- **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.

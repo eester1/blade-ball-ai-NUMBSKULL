@@ -38,8 +38,8 @@ BANNERS = {
     "ai_loading": ("Loading the AI...", "#fff1c2", "#6b4d00"),
     "ai_off": ("AI is loaded but NOT playing yet.\n"
                "Switch to Roblox and press Insert to turn it on.", "#ffd966", "#4d3800"),
-    "ai_armed": ("AI is ON -- click into Roblox.\n"
-                 "It plays rounds by itself and waits in the lobby between them.",
+    "ai_armed": ("AI is ON.\n"
+                 "Click into Roblox if you haven't -- it only plays while Roblox is active.",
                  "#c9e0f7", "#123a5c"),
     "ai_on": ("AI is PLAYING.\nInsert = pause,  {key} (or Stop) = quit.", "#b6e3a8", "#1e4d12"),
     "ai_lobby": ("AI is waiting in the lobby.\n"
@@ -87,7 +87,11 @@ STOP_KEYS = {
     "F6": "f6", "F7": "f7", "F8": "f8", "F9": "f9", "F10": "f10", "F12": "f12",
 }
 
-# The panel's choices (camera, stop key, ...) are remembered between runs.
+# Gamemodes Auto can vote for between rounds: shown name -> play_live.py --vote.
+VOTE_MODES = {"None": None, "Classic": "classic"}
+
+# The panel's choices (camera, stop key, ...) are remembered between runs --
+# except Auto and its vote, which always start off.
 SETTINGS_PATH = HERE / "panel_settings.json"
 
 
@@ -148,10 +152,14 @@ class App:
         ttk.Checkbutton(play, text="Invert camera", variable=self.invert).grid(row=0, column=2, sticky="w", padx=8)
         self.log = tk.BooleanVar(value=saved.get("log", True))
         ttk.Checkbutton(play, text="Save a log of this run", variable=self.log).grid(row=0, column=3, sticky="w")
-        self.auto = tk.BooleanVar(value=saved.get("auto", True))
-        ttk.Checkbutton(play, text="Auto-play (plays each round, waits in the lobby between rounds)",
-                        variable=self.auto, command=self.update_play_hint).grid(
-            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        # Auto and its vote always start off, whatever was used last time.
+        self.auto = tk.BooleanVar(value=False)
+        ttk.Checkbutton(play, text="Auto", variable=self.auto,
+                        command=self.update_play_hint).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(play, text="Auto vote:").grid(row=1, column=1, sticky="e", pady=(4, 0))
+        self.vote = tk.StringVar(value="None")
+        ttk.Combobox(play, textvariable=self.vote, values=list(VOTE_MODES), state="readonly",
+                     width=8).grid(row=1, column=2, sticky="w", padx=8, pady=(4, 0))
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
         self.stop_key = tk.StringVar(value=saved.get("stop_key", "End"))
         if self.stop_key.get() not in STOP_KEYS:
@@ -293,7 +301,7 @@ class App:
         try:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
-                "auto": self.auto.get(), "stop_key": self.stop_key.get()}, indent=2))
+                "stop_key": self.stop_key.get()}, indent=2))
         except OSError:
             pass  # not worth failing a start over
 
@@ -341,8 +349,10 @@ class App:
             argv.append("--camera-invert")
         if self.log.get():
             argv.append("--log")
-        if not self.auto.get():
-            argv.append("--no-auto")
+        if self.auto.get():
+            argv.append("--auto")
+            if VOTE_MODES[self.vote.get()]:
+                argv += ["--vote", VOTE_MODES[self.vote.get()]]
         self.proc_quit_key = getattr(keyboard.Key, quit_key)
         self.run("AI running." if self.auto.get() else
                  "AI loaded -- press Insert in Roblox to turn it on.",
