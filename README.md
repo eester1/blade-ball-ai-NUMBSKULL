@@ -37,18 +37,83 @@ Tested on Windows with Roblox running in a window (or fullscreen) on the primary
 python app.py
 ```
 
-Opens a window with buttons for everything below, so you don't need to type commands:
+This opens a window with a button for everything, so you never have to type the commands further down. Keep it open while you play. Starting a script from it always runs the latest version of that script, so you only need to reopen the panel after `app.py` itself changes. Opening a second panel closes the first one, and stops whatever it was running.
 
-- **Banner** at the top — says in big colored text what's happening right now. Starting the AI or the recorder only *loads* it; it does nothing until you press **Insert** in Roblox, so the banner says "loaded but NOT playing yet" (yellow) until you do, then "PLAYING" (green) or "RECORDING" (red), and "PAUSED" when you press Insert again.
-- **Play** — pick the camera method (mouse / keys / off), invert, and whether to save a log; *Start AI* and *Test camera*.
-- **Record your own gameplay** — starts the recorder.
-- **Update the AI from recordings** — tracks the ball in any new recordings, rebuilds the dataset and retrains the model. Tick *Re-track all recordings* after detection changes, and *Also retrain the ball detector* after new recordings.
-- **How did it go?** — score the latest run or all runs (see [Scoring runs](#scoring-runs-score_logspy)), open the logs folder.
-- **Stop** — ends whatever is running by pressing End (the scripts' own safe-quit key, which releases every held key/button), force-closing only if it doesn't respond.
+### What's on the panel
 
-The in-game hotkeys still work while anything runs: **Insert** toggles, **End** quits. The window shows each script's output as it runs. Only one thing runs at a time — while it does, the other buttons are greyed out and a message says to press Stop first (scoring works any time). Only one panel is open at a time, too: opening a new one closes the old one, stopping whatever it was running. The rest of this README describes the scripts it runs.
+- **Status banner (top).** Large coloured text saying what's happening right now. It follows the running script's own output, so it stays correct when you press the hotkeys in Roblox as well as the panel's buttons.
 
-## Full workflow
+  | Banner | Meaning |
+  |---|---|
+  | grey — *Nothing running* | Nothing is running |
+  | yellow — *loaded but NOT playing yet* | The AI or recorder is waiting for you to press **Insert** in Roblox |
+  | green — *AI is PLAYING* | The AI is pressing keys for you |
+  | yellow — *AI is PAUSED* | You pressed Insert again; press it once more to resume |
+  | red — *RECORDING* | Your gameplay is being recorded |
+  | blue | Camera test or model update in progress |
+
+- **Play**
+  - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
+  - **Invert camera** — tick this if the camera test turns the wrong way.
+  - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored and problems diagnosed. Leave it on.
+  - **Start AI (then press Insert in Roblox)** — loads the AI. It stays **off** until you press Insert in Roblox.
+  - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
+- **Record your own gameplay** — **Start recorder (then press Insert in Roblox)** loads the recorder. Insert starts and stops each recording.
+- **Update the AI from recordings** — **Update model** teaches the AI from everything in `recordings/` (see below). The options:
+  - **Re-track all recordings** — tracks the ball again in every recording, not just new ones. Slow; only needed after the ball detection code changes.
+  - **Also retrain the ball detector** — retrains the learned ball detector too. Slow; worth doing after recording new sessions, especially on new maps.
+- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)) and **Open logs folder**. These work at any time, even while the AI is playing.
+- **Stop** — ends whatever is running, safely: it presses End (the scripts' own quit key, which lets go of every held key and button), and only force-closes the script if it doesn't respond.
+- **Output box** — everything the running script prints.
+
+Only one script runs at a time. While one is running, the other buttons are greyed out, and a message says to press **Stop** first. Scoring works at any time.
+
+**Hotkeys in Roblox** (the AI and recorder listen for these even though the panel isn't focused): **Insert** turns the AI or recording on and off, and **End** quits the script.
+
+### First time: check the camera
+
+1. In Roblox, join a game.
+2. In the panel, set **Camera** to `mouse` and press **Test camera**, then click into Roblox within 3 seconds.
+3. The view should turn left for a second, then right. If it turns the wrong way, tick **Invert camera**. If it doesn't move at all, try `keys`.
+
+### Let the AI play
+
+1. Press **Start AI (then press Insert in Roblox)**. The banner turns yellow: the AI is loaded but **not playing yet**.
+2. Click into Roblox and press **Insert**. The banner turns green, and the AI is playing.
+3. Press **Insert** again to pause it, whenever you want to play yourself. Press **End** in Roblox, or **Stop** in the panel, to quit.
+4. Afterwards, press **Score latest run** to see how often it got targeted, blocked and survived.
+
+While it's on, the AI sends real key and mouse input to whatever window is focused, so keep Roblox focused.
+
+### Teach the AI with your own gameplay
+
+The AI learns by copying what you do, so the more of your own play it sees, the better it gets.
+
+1. **Record.** Press **Start recorder (then press Insert in Roblox)**. The banner turns yellow. Click into Roblox and press **Insert** to start recording, and the banner turns red. Play normally, then press **Insert** again to stop and save that recording. You can record several in a row. Press **Stop** when you're done.
+2. **Update the model.** Press **Update model**. Tick **Also retrain the ball detector** if you recorded on maps it hasn't seen before. The panel then:
+   1. finds the ball in every new recording (the slow part — it can take several minutes);
+   2. retrains the ball detector, if ticked;
+   3. rebuilds the training data from **all** your recordings;
+   4. retrains the AI from scratch and saves it as `model.joblib`.
+
+   Wait until the banner goes grey and the status says *Done*.
+3. **Play.** Press **Start AI** as usual. It uses the new model straight away.
+
+What makes recordings useful:
+
+- **Block the way you normally do.** Use **F** or left click; both count the same.
+- **Use your ability with Q.** The AI can only learn to use abilities if you do in your recordings; none of the current ones have any.
+- **Mix maps and situations.** The AI only learns what it has seen, so record on several maps, in close fights, and when the ball comes at you from behind.
+- **Record whole rounds.** Keep recording through the calm parts too, because the AI also needs to learn when *not* to block. Stop recording between matches, in menus and lobbies.
+- **Keep the same camera zoom and screen resolution** that the AI plays at. Detection and the block distances assume them.
+
+Each recording is saved to `recordings/session_<date>_<time>/`. To remove a bad recording (for example, you were in a menu the whole time), delete its folder, then press **Update model**.
+
+The rest of this README describes the scripts that the panel runs, for anyone who wants to run them by hand or change them.
+
+## Full workflow (by hand)
+
+What the panel does, step by step, as commands.
 
 ### 1. Record gameplay
 
