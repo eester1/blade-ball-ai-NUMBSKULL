@@ -63,14 +63,16 @@ from features import FeatureTracker
 FPS = 15
 
 # How confident the model needs to be (0-1) before actually taking each
-# action. Blocking is lowered: missing a real block (death) is worse than
-# an unnecessary one (mostly harmless).
+# action. Blocking is a bit lower: missing a real block (death) is worse
+# than an unnecessary one, and since blocks are re-tapped (below) an early
+# one no longer costs the chance to block again. 0.4 fires on roughly the
+# same share of targeting frames as you actually blocked in recordings.
 THRESHOLDS = {
     "held_w": 0.5,
     "held_a": 0.5,
     "held_s": 0.5,
     "held_d": 0.5,
-    "held_block": 0.3,
+    "held_block": 0.4,
     "held_ability": 0.5,
 }
 
@@ -78,6 +80,14 @@ THRESHOLDS = {
 # block live); F would work too.
 KEY_ACTIONS = {"w": "w", "a": "a", "s": "s", "d": "d", "ability": "q"}
 MOUSE_ACTIONS = {"block": mouse.Button.left}
+
+# Actions that only do something at the moment they're pressed -- holding
+# them doesn't repeat them. Blade Ball's block triggers once per press, so
+# holding it from an early press means it never fires again when the ball
+# actually arrives. These are tapped instead, and re-tapped at most this
+# often (seconds) for as long as the model keeps wanting them.
+TAP_ACTIONS = {"block": 0.35}
+TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 
 TOGGLE_KEY = keyboard.Key.insert
 QUIT_KEY = keyboard.Key.end
@@ -219,13 +229,7 @@ class AIController:
         self.stale_count = 0      # consecutive frames barely-unchanged in position
         self.pending = None       # candidate awaiting next-frame confirmation
 
-        # Once pressed, some actions must stay held for at least this long
-        # (seconds) before they're allowed to release, even if the model's
-        # frame-by-frame confidence dips below threshold in between. This
-        # stops a correctly-timed-but-brief block signal from letting go
-        # right before the ball actually arrives.
-        self.min_hold_seconds = {"block": 0.4}
-        self.press_time = {}  # action -> time.time() it was last pressed
+        self.last_tap = {}  # tap action -> time.time() it was last tapped
 
         self._sct = mss.mss()
 
@@ -280,22 +284,25 @@ class AIController:
         self.camera.stop()
 
     def apply_actions(self, desired):
+        """Holds/releases held actions to match `desired`, and taps any tap
+        action in it that's due. Returns the set of actions tapped."""
         now = time.time()
-        to_press = desired - self.currently_held
+        tapped = set()
+        for action in desired & TAP_ACTIONS.keys():
+            if now - self.last_tap.get(action, 0) >= TAP_ACTIONS[action]:
+                self.press_action(action)
+                time.sleep(TAP_DOWN_S)
+                self.release_action(action)
+                self.last_tap[action] = now
+                tapped.add(action)
 
-        to_release = set()
-        for action in self.currently_held - desired:
-            if now - self.press_time.get(action, 0) >= self.min_hold_seconds.get(action, 0):
-                to_release.add(action)
-            # else: not held long enough yet -- keep it held a bit longer
-
-        for action in to_press:
+        held = desired - TAP_ACTIONS.keys()
+        for action in held - self.currently_held:
             self.press_action(action)
-            self.press_time[action] = now
-        for action in to_release:
+        for action in self.currently_held - held:
             self.release_action(action)
-
-        self.currently_held = (self.currently_held - to_release) | to_press
+        self.currently_held = held
+        return tapped
 
     # --- ball tracking -------------------------------------------------
 
@@ -361,7 +368,7 @@ class AIController:
         }
         return desired, proba
 
-    def log_frame(self, t, frame_bgr, ball, row, proba, desired):
+    def log_frame(self, t, frame_bgr, ball, row, proba, desired, tapped):
         frame_name = None
         if self._log_frames_dir is not None:
             frame_name = f"{self._log_frame_idx:06d}.jpg"
@@ -373,6 +380,7 @@ class AIController:
             **row,
             "proba": {label: float(p) for label, p in zip(self.label_columns, proba)},
             "desired": sorted(desired),
+            "tapped": sorted(tapped),
             "camera": self.camera.direction,
         }
         self._log_file.write(json.dumps(entry) + "\n")
@@ -429,10 +437,10 @@ class AIController:
                     self.last_feature_t = capture_t
 
                     desired, proba = self.predict_actions(row)
-                    self.apply_actions(desired)
+                    tapped = self.apply_actions(desired)
                     self.steer_camera(x, width, capture_t)
                     if self._log_file is not None:
-                        self.log_frame(capture_t, frame_bgr, ball, row, proba, desired)
+                        self.log_frame(capture_t, frame_bgr, ball, row, proba, desired, tapped)
 
             elapsed = time.time() - start
             time.sleep(max(0.0, interval - elapsed))
