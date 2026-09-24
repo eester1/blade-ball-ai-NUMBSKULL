@@ -60,13 +60,39 @@ DEFAULT_CONFIG = {
     # Shape filtering (in pixels / ratio), tune if the ball is very
     # small/large on your screen resolution
     "min_area": 90,
-    "max_area": 6000,
+    # A ball right next to you can be ~100px in radius on a 1080p screen --
+    # this has to be big enough not to throw the ball away exactly when it's
+    # about to hit.
+    "max_area": 130000,
     "min_circularity": 0.75,
     # Fraction of the blob's outline that's actually filled with ball
     # color. The ball is a solid disc (~1.0); round lettering in red
     # announcement banners ("STANDOFF", "NO ONE WON!") passes the color and
     # circularity checks but is a hollow ring (~0.75-0.85).
     "min_fill": 0.9,
+    # A fast ball's glowing trail is pale enough to pass the color filter
+    # and merges with the ball into one long blob that fails the round-shape
+    # check. For such blobs, the largest solid circle that fits inside is
+    # taken as the ball -- if it makes up at least core_min_share of the
+    # blob and stands out from its surroundings: at most core_max_ring of a
+    # ring just outside it may be ball-colored (a trail touches the ball on
+    # one side; a wall, floor or cloud would surround it on all sides).
+    "core_min_share": 0.5,
+    "core_max_ring": 0.5,
+    # Only close (big) balls drag a trail long enough to break the shape
+    # check; below this radius, recovering a core just turns irregular
+    # specks into extra decoys.
+    "core_min_radius": 12,
+    # The ball's apparent size changes smoothly -- it can't go from radius 40
+    # to 6 in a fifth of a second. A core continues the track only if its
+    # radius is within this factor range of the tracked ball's last radius
+    # (the ball grows fast as it closes in, but a sky patch or effect usually
+    # isn't its size), and for size_continuity_frames after the track was
+    # last seen, a far "jump" candidate must be within it too -- otherwise a
+    # speck elsewhere takes over the moment a close ball blinks out for a
+    # frame or two. Past that window the ball may really have gone far away.
+    "core_radius_ratio": [0.5, 2.5],
+    "size_continuity_frames": 10,
     # Fractional (0-1) screen regions to ignore entirely -- covers the
     # left-side HUD panel (coins/AFK/skills/quests/emote/level icon),
     # the top stats bar, the bottom BLOCK/ABILITY icons, the bottom-left
@@ -158,46 +184,84 @@ def build_masks(hsv, cfg):
 
 
 def find_ball_candidates(frame_bgr, cfg):
-    """Returns every ball-colored/shaped blob in the frame, as a list of
-    (circularity, x, y, state, radius) -- not just the single best one.
-    radius is the apparent size in pixels (from contour area), which grows
-    as the ball gets closer. Color and shape alone can't tell the real ball
+    """Returns (candidates, cores). candidates are every ball-colored/shaped
+    blob in the frame, as (circularity, x, y, state, radius) -- not just the
+    single best one; radius is the apparent size in pixels, which grows as
+    the ball gets closer. Color and shape alone can't tell the real ball
     apart from other round pale/red things on screen (another player's
     head, a skill effect), so callers that track the ball over time should
-    disambiguate using where it was last seen (closest_to) rather than
-    blindly trusting whichever candidate is most circular in isolation."""
+    disambiguate using where it was last seen (near_track / closest_to)
+    rather than blindly trusting whichever is most circular in isolation.
+
+    cores are round cores recovered from blobs that failed the shape check
+    (a close ball merged with its trail -- see core_* config), same format.
+    Sky patches and glowing effects can yield convincing cores too, so they
+    must only ever be used to *continue* an existing track (near_track),
+    never to pick up a new ball."""
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     white_mask, red_mask = build_masks(hsv, cfg)
 
-    candidates = []
+    candidates, cores = [], []
     for mask, state in ((white_mask, "idle"), (red_mask, "targeting")):
         mask = apply_ui_mask(mask, cfg)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contours:
             area = cv2.contourArea(c)
-            if area < cfg["min_area"] or area > cfg["max_area"]:
+            if area < cfg["min_area"]:
                 continue
             perimeter = cv2.arcLength(c, True)
             if perimeter == 0:
                 continue
             circularity = 4 * np.pi * area / (perimeter * perimeter)
-            if circularity < cfg["min_circularity"]:
-                continue
             bx, by, bw, bh = cv2.boundingRect(c)
             outline = np.zeros((bh, bw), np.uint8)
             cv2.drawContours(outline, [c], -1, 255, -1, offset=(-bx, -by))
+            solid = cv2.bitwise_and(mask[by:by + bh, bx:bx + bw], outline)
             inside = cv2.countNonZero(outline)
-            filled = cv2.countNonZero(cv2.bitwise_and(mask[by:by + bh, bx:bx + bw], outline))
-            if inside == 0 or filled / inside < cfg["min_fill"]:
-                continue
-            M = cv2.moments(c)
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            radius = (area / np.pi) ** 0.5
-            candidates.append((circularity, cx, cy, state, radius))
+            fill = cv2.countNonZero(solid) / inside if inside else 0.0
 
-    return candidates
+            if circularity >= cfg["min_circularity"] and fill >= cfg["min_fill"] \
+                    and area <= cfg["max_area"]:
+                M = cv2.moments(c)
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                candidates.append((circularity, cx, cy, state, (area / np.pi) ** 0.5))
+            else:
+                core = _round_core(mask, solid, bx, by, area, cfg)
+                if core is not None:
+                    cx, cy, radius = core
+                    cores.append((cfg["min_circularity"], cx, cy, state, radius))
+
+    return candidates, cores
+
+
+def _round_core(mask, solid, bx, by, blob_area, cfg):
+    """Largest solid circle inside a blob that failed the round-shape check,
+    as (x, y, radius) -- or None if it isn't ball-like (see core_* config)."""
+    padded = cv2.copyMakeBorder(solid, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    dist = cv2.distanceTransform(padded, cv2.DIST_L2, 5)
+    _, radius, _, (px, py) = cv2.minMaxLoc(dist)
+    disc_area = np.pi * radius * radius
+    if radius < cfg["core_min_radius"] or disc_area < cfg["core_min_share"] * blob_area \
+            or disc_area > cfg["max_area"]:
+        return None
+
+    cx, cy = bx + px - 1, by + py - 1
+    h, w = mask.shape
+    outer = int(np.ceil(radius * 1.5))
+    x0, y0 = max(cx - outer, 0), max(cy - outer, 0)
+    x1, y1 = min(cx + outer + 1, w), min(cy + outer + 1, h)
+    ring = np.zeros((y1 - y0, x1 - x0), np.uint8)
+    cv2.circle(ring, (cx - x0, cy - y0), outer, 255, -1)
+    cv2.circle(ring, (cx - x0, cy - y0), int(radius * 1.2), 0, -1)
+    ring_px = cv2.countNonZero(ring)
+    if ring_px == 0:
+        return None
+    covered = cv2.countNonZero(cv2.bitwise_and(mask[y0:y1, x0:x1], ring)) / ring_px
+    if covered > cfg["core_max_ring"]:
+        return None
+    return cx, cy, radius
 
 
 def self_highlight_score(frame_bgr, cfg):
@@ -213,6 +277,25 @@ def self_highlight_score(frame_bgr, cfg):
         cv2.inRange(hsv, (cfg["red_hue_high_min"], sat, val), (180, 255, 255)),
     )
     return float(mask.mean() / 255)
+
+
+def near_track(candidates, cores, point, radius, max_dist, cfg):
+    """Candidates within max_dist of the tracked ball's position, plus cores
+    that are near it *and* about the tracked ball's size -- the only way a
+    core is ever trusted (see find_ball_candidates)."""
+    px, py = point
+
+    def close(c):
+        return ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist
+
+    return [c for c in candidates if close(c)] + \
+        size_consistent([c for c in cores if close(c)], radius, cfg)
+
+
+def size_consistent(candidates, radius, cfg):
+    """Candidates whose radius is plausible for the same ball as `radius`."""
+    lo, hi = cfg["core_radius_ratio"]
+    return [c for c in candidates if lo <= c[4] / radius <= hi]
 
 
 def closest_to(candidates, point):
@@ -318,48 +401,50 @@ def run_session(session_dir, cfg, debug, debug_every):
     found_count = 0
     rejected_count = 0
     last_good = None       # (x, y)
+    last_radius = None     # apparent radius of the last trusted detection
     last_good_idx = None   # frame index of last trusted detection
     stale_count = 0        # consecutive accepted frames barely-unchanged in position
     results = [None] * len(frame_paths)  # final (x, y, state, radius) or None, per frame
 
-    for i, candidates in enumerate(raw):
-        if not candidates:
-            continue
-
-        if last_good is None:
+    for i, (candidates, cores) in enumerate(raw):
+        fresh = last_good is None or i - last_good_idx > cfg["reset_after_missing_frames"] \
+            or stale_count >= cfg["stale_after_frames"]
+        if fresh:
+            if not candidates:
+                continue
             x, y, state, radius = most_circular(candidates)[1:]
         else:
             elapsed = i - last_good_idx
-            if elapsed > cfg["reset_after_missing_frames"] or stale_count >= cfg["stale_after_frames"]:
-                x, y, state, radius = most_circular(candidates)[1:]
+            allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
+            near = near_track(candidates, cores, last_good, last_radius, allowed, cfg)
+            if elapsed <= cfg["size_continuity_frames"]:
+                candidates = size_consistent(candidates, last_radius, cfg)
+            if near:
+                x, y, state, radius = closest_to(near, last_good)[1:]
+            elif not candidates:
+                continue
             else:
-                allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
-                near = [c for c in candidates
-                        if ((c[1] - last_good[0]) ** 2 + (c[2] - last_good[1]) ** 2) ** 0.5 <= allowed]
-                if near:
-                    x, y, state, radius = closest_to(near, last_good)[1:]
-                else:
-                    # Nothing near the last trusted position -- could be
-                    # real fast movement, could be a decoy. Only trust it
-                    # if the next detected frame keeps going near it.
-                    cx, cy, cstate, cradius = most_circular(candidates)[1:]
-                    confirmed = False
-                    lookahead_end = min(i + 1 + cfg["confirm_lookahead_frames"], len(raw))
-                    for j in range(i + 1, lookahead_end):
-                        nxt = raw[j]
-                        if not nxt:
-                            continue
-                        elapsed2 = j - i
-                        allowed2 = cfg["max_jump_px_per_frame"] * max(elapsed2, 1)
-                        confirmed = any(
-                            ((c[1] - cx) ** 2 + (c[2] - cy) ** 2) ** 0.5 <= allowed2
-                            for c in nxt
-                        )
-                        break  # only the next detected frame counts as confirmation
-                    if not confirmed:
-                        rejected_count += 1
-                        continue  # implausible jump, no confirmation -- drop this frame
-                    x, y, state, radius = cx, cy, cstate, cradius
+                # Nothing near the last trusted position -- could be
+                # real fast movement, could be a decoy. Only trust it
+                # if the next detected frame keeps going near it.
+                cx, cy, cstate, cradius = most_circular(candidates)[1:]
+                confirmed = False
+                lookahead_end = min(i + 1 + cfg["confirm_lookahead_frames"], len(raw))
+                for j in range(i + 1, lookahead_end):
+                    nxt = raw[j][0]
+                    if not nxt:
+                        continue
+                    elapsed2 = j - i
+                    allowed2 = cfg["max_jump_px_per_frame"] * max(elapsed2, 1)
+                    confirmed = any(
+                        ((c[1] - cx) ** 2 + (c[2] - cy) ** 2) ** 0.5 <= allowed2
+                        for c in nxt
+                    )
+                    break  # only the next detected frame counts as confirmation
+                if not confirmed:
+                    rejected_count += 1
+                    continue  # implausible jump, no confirmation -- drop this frame
+                x, y, state, radius = cx, cy, cstate, cradius
 
         if last_good is not None and \
                 ((x - last_good[0]) ** 2 + (y - last_good[1]) ** 2) ** 0.5 <= cfg["stale_jitter_px"]:
@@ -369,6 +454,7 @@ def run_session(session_dir, cfg, debug, debug_every):
 
         found_count += 1
         last_good = (x, y)
+        last_radius = radius
         last_good_idx = i
         results[i] = (x, y, state, radius)
 

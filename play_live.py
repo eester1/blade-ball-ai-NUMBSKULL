@@ -231,7 +231,7 @@ class AIController:
         self.currently_held = set()
         self.features = FeatureTracker()
         self.last_feature_t = 0.0
-        self.prev_ball = None     # (x, y) of the last trusted detection
+        self.prev_ball = None     # (x, y, radius) of the last trusted detection
         self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
         self.missing_streak = 0
         self.missing_since = None
@@ -317,14 +317,12 @@ class AIController:
 
     # --- ball tracking -------------------------------------------------
 
-    def select_ball(self, candidates):
-        """Pick the real ball out of this frame's candidates, or None.
-        Mirrors track_ball.py's batch tracker, except that live play can't
-        peek at the next frame -- a big jump is held as pending for one
-        frame and only trusted if the next frame confirms it."""
-        if not candidates:
-            return None
-
+    def select_ball(self, candidates, cores):
+        """Pick the real ball out of this frame's candidates (or, to continue
+        an existing track, its trail-merged cores), or None. Mirrors
+        track_ball.py's batch tracker, except that live play can't peek at
+        the next frame -- a big jump is held as pending for one frame and
+        only trusted if the next frame confirms it."""
         # A real ball shouldn't sit at the exact same pixel for seconds --
         # if it has, stop trusting proximity to that spot (it's more likely
         # a static decoy: a map decoration, a standing player, an unmasked
@@ -333,15 +331,19 @@ class AIController:
         if self.prev_ball is None or stale:
             self.pending = None
             self.track_len = 0
-            return track_ball.most_circular(candidates)[1:]
+            return track_ball.most_circular(candidates)[1:] if candidates else None
 
-        px, py = self.prev_ball
+        px, py, pr = self.prev_ball
         max_dist = self.cfg["max_jump_px_per_frame"] * max(1, self.missing_streak + 1)
-        near = [c for c in candidates if ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist]
+        near = track_ball.near_track(candidates, cores, (px, py), pr, max_dist, self.cfg)
         if near:
             self.pending = None
             self.track_len += 1
             return track_ball.closest_to(near, (px, py))[1:]
+        if self.missing_streak < self.cfg["size_continuity_frames"]:
+            candidates = track_ball.size_consistent(candidates, pr, self.cfg)
+        if not candidates:
+            return None
 
         best = track_ball.most_circular(candidates)[1:]
         if self.pending is not None and \
@@ -435,7 +437,7 @@ class AIController:
                 self.camera.update(start)
                 capture_t = time.time()
                 frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
-                ball = self.select_ball(track_ball.find_ball_candidates(frame_bgr, self.cfg))
+                ball = self.select_ball(*track_ball.find_ball_candidates(frame_bgr, self.cfg))
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
                 targeted = self.self_red >= SELF_TARGET_THRESHOLD
                 row = proba = None
@@ -459,7 +461,7 @@ class AIController:
                         self.stale_count += 1
                     else:
                         self.stale_count = 0
-                    self.prev_ball = (x, y)
+                    self.prev_ball = (x, y, radius)
 
                     # A turning camera sweeps the whole scene across the
                     # screen -- that motion isn't the ball's, so restart

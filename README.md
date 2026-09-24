@@ -133,7 +133,9 @@ Because a single frame's color/shape signal alone can't reliably tell the real b
 |---|---|
 | `white_sat_max`, `white_val_min` | HSV range for the idle (white/grey) ball |
 | `red_hue_low_max`, `red_hue_high_min`, `red_sat_min`, `red_val_min` | HSV range for the targeting (red) ball — red wraps around hue 0, so it's two ranges |
-| `min_area`, `max_area`, `min_circularity` | Shape filter — rejects blobs that are the wrong size or not round enough |
+| `min_area`, `max_area`, `min_circularity` | Shape filter — rejects blobs that are the wrong size or not round enough. `max_area` is deliberately large: a ball right next to you can be ~100 px in radius, and an earlier, smaller limit threw the ball away exactly when it was about to hit |
+| `core_min_share`, `core_max_ring`, `core_min_radius` | A close, fast ball's pale trail merges with it into one long blob that fails the round-shape check. For such blobs the largest solid circle inside is recovered as a "core" — if it's at least 12 px in radius, makes up at least half the blob, and stands out from its surroundings (a trail touches one side; a wall or floor would surround it). Sky patches and glowing effects can produce convincing cores too, so a core is only ever used to *continue* an existing track, never to pick up a new ball |
+| `core_radius_ratio`, `size_continuity_frames` | The ball's apparent size changes smoothly. A core continues the track only if it's 0.5–2.5× the tracked ball's last radius, and for 10 frames after a track was last seen a far "jump" candidate has to be too — otherwise a speck elsewhere takes over the moment a close ball blinks out for a frame or two |
 | `min_fill` | Fraction of a blob's outline actually filled with ball color. The ball is a solid disc (~1.0, and ≥0.9 for ~97% of tracked balls in the recordings); round lettering in red announcement banners ("STANDOFF", "NO ONE WON!") is a hollow ring (~0.75–0.85) and gets rejected |
 | `ui_mask_regions` | Fractional screen regions ignored entirely (HUD panels, stat bar, block/ability icons, a couple of static decorations found to cause false positives) |
 | `max_jump_px_per_frame`, `reset_after_missing_frames`, `confirm_lookahead_frames` | A detection far from the last trusted position isn't rejected outright — it's trusted if the *next* detected frame keeps going near it (real fast movement/bounces continue, a one-off flash doesn't) |
@@ -184,8 +186,8 @@ The model can only react to a ball it can see, so `play_live.py` turns the camer
 
 Two ways to turn, chosen with `--camera`:
 
-- `keys` (default) — Roblox's Left/Right arrow keys, which rotate the default camera.
-- `mouse` — holds right mouse and drags, sent as raw relative mouse input (Windows `SendInput`). Roblox reads camera drags from raw mouse deltas, which ordinary cursor movement doesn't reliably produce.
+- `keys` (default) — Roblox's Left/Right arrow keys, which rotate the default camera. Works, but turns slowly: in testing, swinging around to find a ball that was targeting you from behind took almost a second — about as long as the ball took to arrive.
+- `mouse` — holds right mouse and drags, sent as raw relative mouse input (Windows `SendInput`). Roblox reads camera drags from raw mouse deltas, which ordinary cursor movement doesn't reliably produce. Turn speed is set by `CAMERA_MOUSE_SPEED` (and your Roblox mouse sensitivity), so it can turn much faster than the arrow keys.
 
 Tunables (`CAMERA_*` at the top of `play_live.py`): dead-zone width, turn duration per unit of offset, search timing, and mouse drag speed. The camera only turns horizontally; there's no up/down control yet.
 
