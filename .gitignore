@@ -1,5 +1,6 @@
 # Recorded gameplay sessions (large: frames + logs) and diagnostic dumps
 recordings/
+live_logs/
 live_session*_frames/
 *.jsonl
 

@@ -124,7 +124,7 @@ python play_live.py model.joblib
 - Movement keys are held for as long as the model wants them. Block is **tapped** instead, and re-tapped at most every 0.35 s (`TAP_ACTIONS`) while the model keeps wanting it — Blade Ball's block only triggers at the moment of the press, so holding it from an early press would mean it never fires again when the ball actually arrives.
 - Per-action confidence thresholds are in `THRESHOLDS` (block is 0.4: on held-out data that fires on about the same share of targeting frames as you actually blocked).
 - Refuses to start with a `model.joblib` trained on an older label set — rebuild the dataset and retrain after updating.
-- Optional diagnostics: `--log path.jsonl` writes one JSON line per live-inferred frame (every feature, the model's per-action confidence, actions taken, camera turn direction) **and** saves every captured frame as a JPEG into `path_frames/`. This is the main tool for root-causing "why did it do that" after a session — see [Diagnosing bad behavior](#diagnosing-bad-behavior).
+- Optional diagnostics: `--log` writes one JSON line per live-inferred frame (every feature, the model's per-action confidence, actions taken, camera turn direction) **and** saves every captured frame as a JPEG into a matching `_frames/` folder. Plain `--log` makes a new timestamped file in `live_logs/` each run (e.g. `live_logs/live_20260923_213000.jsonl`), so earlier logs are never overwritten; `--log name.jsonl` uses the name you give. This is the main tool for root-causing "why did it do that" after a session — see [Diagnosing bad behavior](#diagnosing-bad-behavior).
 
 ## Ball detection (`track_ball.py`)
 
@@ -202,10 +202,10 @@ Tunables (`CAMERA_*` at the top of `play_live.py`): dead-zone width, turn durati
 If the AI does something confusing live, don't guess — capture it:
 
 ```
-python play_live.py model.joblib --log session.jsonl
+python play_live.py model.joblib --log
 ```
 
-This gives you, for every frame the AI acted on: the detected ball position/velocity/state, the model's confidence for each action, and what it actually pressed — plus the actual frame image in `session_frames/`, so you can visually confirm what was really being tracked at any point. This has already been essential for catching cases where detection locked onto the wrong thing entirely (see below).
+This gives you, for every frame the AI acted on: the detected ball position/velocity/state, the model's confidence for each action, and what it actually pressed — plus the actual frame image in the matching `live_logs/live_<date>_<time>_frames/` folder, so you can visually confirm what was really being tracked at any point. This has already been essential for catching cases where detection locked onto the wrong thing entirely (see below).
 
 ## Known Limitations
 

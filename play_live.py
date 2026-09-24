@@ -30,7 +30,8 @@ USAGE:
                       a quick check that the camera method and direction
                       are right before letting the AI play.
 
-    Diagnostics: --log session.jsonl writes one JSON line per frame the
+    Diagnostics: --log (a new timestamped file in live_logs/ each run) or
+    --log session.jsonl (a name you choose) writes one JSON line per frame the
     AI acted on (features, model confidences, actions, camera state) and
     saves each captured frame into session_frames/.
 
@@ -592,11 +593,16 @@ def main():
                         help="Flip the camera turn direction")
     parser.add_argument("--camera-test", action="store_true",
                         help="Turn the camera left then right to check the setup, then exit")
-    parser.add_argument("--log", help="Optional path to write a JSONL diagnostic log "
-                                       "(features, predicted confidences, camera) for every "
-                                       "live-inferred frame while AI is enabled. Also saves the "
-                                       "captured frame images into a <log>_frames/ folder.")
+    parser.add_argument("--log", nargs="?", const="auto",
+                        help="Write a JSONL diagnostic log (features, predicted confidences, "
+                             "camera) for every live-inferred frame while AI is enabled, and "
+                             "save the captured frames into a <log>_frames/ folder. With no "
+                             "name, a new timestamped file is made in live_logs/ each run, "
+                             "so earlier logs are never overwritten.")
     args = parser.parse_args()
+    if args.log == "auto":
+        Path("live_logs").mkdir(exist_ok=True)
+        args.log = str(Path("live_logs") / f"live_{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
 
     if args.camera_test:
         run_camera_test(Camera(args.camera, args.camera_invert,
