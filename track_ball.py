@@ -65,6 +65,19 @@ DEFAULT_CONFIG = {
     # about to hit.
     "max_area": 130000,
     "min_circularity": 0.75,
+    # A glowing ball (the red targeting ball especially) has a ragged,
+    # fuzzy edge that inflates its perimeter and sinks the plain
+    # circularity score (0.59 for a perfectly round glowing ball seen live).
+    # Its convex hull ignores the raggedness, so a blob also counts as round
+    # if its hull's circularity reaches this. Real balls score 0.95-0.98
+    # here; banner letters, sky patches and explosion flashes 0.83-0.89.
+    "min_hull_circularity": 0.92,
+    # Blob area / convex-hull area. A ball covers nearly all of its hull
+    # (0.95-0.98); letters with a round outline and an opening -- a G or C in
+    # an announcement banner -- don't (0.73-0.82), and the solid-fill check
+    # below can't catch them because the opening lets their outline follow
+    # the stroke.
+    "min_solidity": 0.9,
     # Fraction of the blob's outline that's actually filled with ball
     # color. The ball is a solid disc (~1.0); round lettering in red
     # announcement banners ("STANDOFF", "NO ONE WON!") passes the color and
@@ -135,11 +148,24 @@ DEFAULT_CONFIG = {
     # The character always sits in about the same place on screen, so this
     # is readable even when the ball itself is off-screen or behind the
     # camera -- and it doesn't depend on the ball's own color being picked
-    # up as red. Scored as the fraction of strongly red pixels in this
-    # fractional screen region around the character.
-    "self_highlight_roi": {"x0": 0.44, "y0": 0.43, "x1": 0.56, "y1": 0.60},
+    # up as red. Scored as the fraction of highlight-red pixels in this
+    # fractional screen region, kept tight around the character so another
+    # player standing next to you (highlighted when *they're* targeted)
+    # mostly falls outside it. The highlight is a slightly pinkish red (hue
+    # 170-180); orange-red things near your feet -- dirt, lava, a pumpkin
+    # head -- sit on the other side of pure red (hue ~5-15) and don't count.
+    "self_highlight_roi": {"x0": 0.47, "y0": 0.45, "x1": 0.53, "y1": 0.60},
+    "self_highlight_hue_min": 170,
     "self_highlight_sat_min": 120,
     "self_highlight_val_min": 60,
+    # Score above which you count as targeted. Real highlights scored
+    # 0.15-0.36 in live logs; orange dirt and a highlighted neighbor, <= 0.03.
+    # While targeted, a red ball on screen is trusted immediately rather than
+    # having to match the previous track: when the camera turns to find the
+    # ball, the whole scene sweeps ~300px per frame, so the ball never
+    # looks like a continuation of anything and would otherwise be ignored
+    # frame after frame while the camera swept right past it.
+    "self_target_threshold": 0.08,
 }
 
 
@@ -214,6 +240,13 @@ def find_ball_candidates(frame_bgr, cfg):
             if perimeter == 0:
                 continue
             circularity = 4 * np.pi * area / (perimeter * perimeter)
+            hull = cv2.convexHull(c)
+            hull_area = cv2.contourArea(hull)
+            hull_perimeter = cv2.arcLength(hull, True)
+            hull_circularity = 4 * np.pi * hull_area / (hull_perimeter * hull_perimeter)
+            round_enough = (circularity >= cfg["min_circularity"] or
+                            hull_circularity >= cfg["min_hull_circularity"]) \
+                and area / hull_area >= cfg["min_solidity"]
             bx, by, bw, bh = cv2.boundingRect(c)
             outline = np.zeros((bh, bw), np.uint8)
             cv2.drawContours(outline, [c], -1, 255, -1, offset=(-bx, -by))
@@ -221,12 +254,12 @@ def find_ball_candidates(frame_bgr, cfg):
             inside = cv2.countNonZero(outline)
             fill = cv2.countNonZero(solid) / inside if inside else 0.0
 
-            if circularity >= cfg["min_circularity"] and fill >= cfg["min_fill"] \
-                    and area <= cfg["max_area"]:
+            if round_enough and fill >= cfg["min_fill"] and area <= cfg["max_area"]:
                 M = cv2.moments(c)
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
-                candidates.append((circularity, cx, cy, state, (area / np.pi) ** 0.5))
+                candidates.append((max(circularity, hull_circularity), cx, cy, state,
+                                   (area / np.pi) ** 0.5))
             else:
                 core = _round_core(mask, solid, bx, by, area, cfg)
                 if core is not None:
@@ -271,10 +304,10 @@ def self_highlight_score(frame_bgr, cfg):
     r = cfg["self_highlight_roi"]
     roi = frame_bgr[int(r["y0"] * h):int(r["y1"] * h), int(r["x0"] * w):int(r["x1"] * w)]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    sat, val = cfg["self_highlight_sat_min"], cfg["self_highlight_val_min"]
-    mask = cv2.bitwise_or(
-        cv2.inRange(hsv, (0, sat, val), (cfg["red_hue_low_max"], 255, 255)),
-        cv2.inRange(hsv, (cfg["red_hue_high_min"], sat, val), (180, 255, 255)),
+    mask = cv2.inRange(
+        hsv,
+        (cfg["self_highlight_hue_min"], cfg["self_highlight_sat_min"], cfg["self_highlight_val_min"]),
+        (180, 255, 255),
     )
     return float(mask.mean() / 255)
 
@@ -296,6 +329,15 @@ def size_consistent(candidates, radius, cfg):
     """Candidates whose radius is plausible for the same ball as `radius`."""
     lo, hi = cfg["core_radius_ratio"]
     return [c for c in candidates if lo <= c[4] / radius <= hi]
+
+
+def targeting_ball(candidates, self_red, cfg):
+    """While you're highlighted as targeted, the most ball-like red
+    candidate on screen, else None (see self_target_threshold)."""
+    if self_red < cfg["self_target_threshold"]:
+        return None
+    red = [c for c in candidates if c[3] == "targeting"]
+    return most_circular(red) if red else None
 
 
 def closest_to(candidates, point):
@@ -417,10 +459,13 @@ def run_session(session_dir, cfg, debug, debug_every):
             elapsed = i - last_good_idx
             allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
             near = near_track(candidates, cores, last_good, last_radius, allowed, cfg)
+            red_target = targeting_ball(candidates, self_red[i], cfg)
             if elapsed <= cfg["size_continuity_frames"]:
                 candidates = size_consistent(candidates, last_radius, cfg)
             if near:
                 x, y, state, radius = closest_to(near, last_good)[1:]
+            elif red_target is not None:
+                x, y, state, radius = red_target[1:]
             elif not candidates:
                 continue
             else:

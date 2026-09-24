@@ -65,9 +65,9 @@ FPS = 15
 # How confident the model needs to be (0-1) before actually taking each
 # action. Blocking is a bit lower: missing a real block (death) is worse
 # than an unnecessary one, and since blocks are re-tapped (below) an early
-# one no longer costs the chance to block again. On held-out data 0.4 gives
-# the best F1 (0.36) and catches more of your real blocks than 0.5 does
-# (recall 0.40 vs 0.31).
+# one no longer costs the chance to block again. On held-out data 0.4 has
+# an F1 as good as 0.5's (0.38 vs 0.37) and catches more of your real
+# blocks (recall 0.43 vs 0.36).
 THRESHOLDS = {
     "held_w": 0.5,
     "held_a": 0.5,
@@ -103,9 +103,6 @@ MISSING_FRAMES_RESET = 30
 # from the real ball started on a detection that had just jumped hundreds
 # of pixels -- a decoy -- rather than on a steady track.
 CAMERA_MIN_TRACK_FRAMES = 3
-# Self-highlight score (see track_ball.self_highlight_score) above which
-# your character counts as targeted by the ball.
-SELF_TARGET_THRESHOLD = 0.04
 # Turn toward the ball only once it's past this fraction of the way from
 # screen center to the left/right edge. The dead zone in the middle keeps
 # the ball's on-screen position meaningful to the model (which learned
@@ -322,7 +319,8 @@ class AIController:
         an existing track, its trail-merged cores), or None. Mirrors
         track_ball.py's batch tracker, except that live play can't peek at
         the next frame -- a big jump is held as pending for one frame and
-        only trusted if the next frame confirms it."""
+        only trusted if the next frame confirms it. Uses self.self_red, so
+        compute that for the frame first."""
         # A real ball shouldn't sit at the exact same pixel for seconds --
         # if it has, stop trusting proximity to that spot (it's more likely
         # a static decoy: a map decoration, a standing player, an unmasked
@@ -340,6 +338,11 @@ class AIController:
             self.pending = None
             self.track_len += 1
             return track_ball.closest_to(near, (px, py))[1:]
+        red_target = track_ball.targeting_ball(candidates, self.self_red, self.cfg)
+        if red_target is not None:
+            self.pending = None
+            self.track_len = 0
+            return red_target[1:]
         if self.missing_streak < self.cfg["size_continuity_frames"]:
             candidates = track_ball.size_consistent(candidates, pr, self.cfg)
         if not candidates:
@@ -360,11 +363,17 @@ class AIController:
     def steer_camera(self, ball, width, now, targeted):
         """ball is this frame's (x, y, state, radius) or None; targeted is
         whether your own character is highlighted as the ball's target."""
-        stable = ball is not None and self.track_len >= CAMERA_MIN_TRACK_FRAMES
-        # You're the target but the ball in view (if any) isn't a steadily
-        # tracked red one -- so the ball that's coming for you is off-screen,
-        # usually behind. Find it now instead of waiting to lose track.
-        if targeted and not (stable and ball[2] == "targeting"):
+        # A red ball while you're highlighted counts as the real thing right
+        # away -- it's what the search is looking for, so stop sweeping.
+        stable = ball is not None and (self.track_len >= CAMERA_MIN_TRACK_FRAMES or
+                                       (targeted and ball[2] == "targeting"))
+        # You're the target but no ball is steadily tracked in view -- so the
+        # ball that's coming for you is off-screen, usually behind. Find it
+        # now instead of waiting to lose track. A steadily tracked ball is
+        # kept in view instead, whatever color it reads as: it's usually the
+        # real one even when it doesn't look red, and turning away from it
+        # was exactly what sent the camera the wrong way in live testing.
+        if targeted and not stable:
             self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now)
             return
         if stable:
@@ -437,9 +446,9 @@ class AIController:
                 self.camera.update(start)
                 capture_t = time.time()
                 frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
-                ball = self.select_ball(*track_ball.find_ball_candidates(frame_bgr, self.cfg))
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
-                targeted = self.self_red >= SELF_TARGET_THRESHOLD
+                targeted = self.self_red >= self.cfg["self_target_threshold"]
+                ball = self.select_ball(*track_ball.find_ball_candidates(frame_bgr, self.cfg))
                 row = proba = None
                 desired = tapped = set()
 
