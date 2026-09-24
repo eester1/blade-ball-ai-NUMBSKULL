@@ -422,14 +422,27 @@ def targeting_ball(candidates, self_red, cfg):
     return most_circular(red) if red else None
 
 
-def prefer_red(near, red_target, point):
+STILL_PX = 3  # a detection within this of the last position hasn't moved
+
+
+def prefer_red(near, red_target, point, cores=()):
     """While you're targeted (red_target not None), a red ball beats whatever
     else is being tracked -- otherwise a stuck white decoy keeps "continuing"
-    itself while the red ball coming at you is ignored. Returns
-    (candidate, continued_existing_track), or None when not targeted."""
+    itself while the red ball coming at you is ignored. A red *core* (see
+    core_*) only continues the track if no properly round red ball is on
+    screen: a static red coral decoration, recovered as a core, held the
+    track for 1.5s while the real ball (detector score 0.98) came in and
+    was ignored. Returns (candidate, continued_existing_track), or None
+    when not targeted."""
     if red_target is None:
         return None
+    core_ids = {id(c) for c in cores}
     near_red = [c for c in near if c[3] == "targeting"]
+    if near_red and all(id(c) in core_ids for c in near_red):
+        # A close ball dragging a trail is a core too -- but it moves. A red
+        # core sitting still where the track was is scenery.
+        near_red = [c for c in near_red
+                    if (c[1] - point[0]) ** 2 + (c[2] - point[1]) ** 2 > STILL_PX ** 2]
     if near_red:
         return closest_to(near_red, point), True
     return red_target, False
@@ -560,7 +573,7 @@ def run_session(session_dir, cfg, debug, debug_every):
             elapsed = i - last_good_idx
             allowed = cfg["max_jump_px_per_frame"] * max(elapsed, 1)
             near = near_track(candidates, cores, last_good, last_radius, allowed, cfg)
-            choice = prefer_red(near, red_target, last_good)
+            choice = prefer_red(near, red_target, last_good, cores)
             if elapsed <= cfg["size_continuity_frames"]:
                 candidates = size_consistent(candidates, last_radius, cfg)
             if choice is not None:

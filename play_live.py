@@ -611,7 +611,7 @@ class AIController:
         px, py, pr = self.prev_ball
         max_dist = self.cfg["max_jump_px_per_frame"] * max(1, self.missing_streak + 1)
         near = track_ball.near_track(candidates, cores, (px, py), pr, max_dist, self.cfg)
-        choice = track_ball.prefer_red(near, red_target, (px, py))
+        choice = track_ball.prefer_red(near, red_target, (px, py), cores)
         if choice is not None:
             ball, continued = choice
             self.pending = None
