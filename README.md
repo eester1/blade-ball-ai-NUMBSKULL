@@ -6,6 +6,9 @@ There is no game-engine integration and no memory reading — everything is done
 
 > **Status:** functional but not reliable enough to play unattended yet. See [Known Limitations](#known-limitations) before expecting too much of it.
 
+> [!WARNING]
+> **Using a bot to play Roblox games is against Roblox's Terms of Use**, and it can get your account warned or banned. That goes especially for leaving it running unattended for hours, which is exactly what anti-cheat systems look for. Use this project at your own risk, and stay nearby while it plays. If you do leave it running for a long time anyway, at least untick **Save a log of this run**: a logged run saves about **29 GB of screenshots per hour** of play. See [Long runs and log size](#long-runs-and-log-size).
+
 ## Features
 
 - **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
@@ -378,6 +381,28 @@ Two ways to turn, chosen with `--camera`:
 
 Tunables (`CAMERA_*` at the top of `play_live.py`): dead-zone width, turn duration per unit of offset, search timing, and mouse drag speed. The camera only turns horizontally; there's no up/down control yet.
 
+## Long runs and log size
+
+> [!WARNING]
+> Botting is against Roblox's Terms of Use (see the warning at the top). This section is about disk space, not a recommendation to run it overnight.
+
+With **Save a log of this run** ticked (`--log`), the AI saves **every frame it plays as a screenshot** into `live_logs/live_<date>_<time>_frames/`, so a run can be scored and checked frame by frame. That adds up fast:
+
+| | Saved | Disk use (about) |
+|---|---|---|
+| One screenshot | — | 0.55 MB (1920×1080 JPEG; 551 KB on average over 14,000 saved frames) |
+| Playing a round | 15 screenshots per second | **~8 MB per second, ~29 GB per hour** |
+| Waiting in the lobby (Auto) | 1 screenshot per second | ~2 GB per hour |
+| The log file itself (`.jsonl`) | one line per frame | ~30 MB per hour, small by comparison |
+
+So a whole night of play with logging on is **roughly 100–200 GB**. For example, 8 hours with about two-thirds of the time in rounds comes to about 150 GB.
+
+**What to do:**
+
+- **Long runs: untick Save a log of this run** (leave out `--log`). The AI plays exactly the same; it just keeps no record. The catch is that **Score latest run** has nothing to score for that run, and it can't be analysed afterwards.
+- **Runs you want scored or analysed: keep logging on, and keep them short.** 15–30 minutes each (about 7–15 GB) is plenty. Two or three of those show far more than one very long run.
+- **Clean up old logs.** Delete old `live_logs/live_<date>_<time>.jsonl` files together with their `_frames` folders once you're done with them (**Open logs folder** in the panel). Nothing else in the project depends on them. Recordings in `recordings/` are separate, and are what the AI learns from, so keep those.
+
 ## Diagnosing bad behavior
 
 If the AI does something confusing live, don't guess — capture it:
@@ -415,4 +440,5 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from a handful of live runs; odd approach angles or map lighting may need further tuning — `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
+- **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.

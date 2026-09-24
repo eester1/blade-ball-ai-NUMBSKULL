@@ -13,6 +13,10 @@
 - **Scores confirm deaths** — logs record when the AI went to the lobby, so being sent there right after you were targeted is reported as **died/round over** instead of a guess.
 - New banners for the new states: waiting in the lobby, and waiting for the Roblox window.
 
+### Docs
+
+- A warning that botting is against Roblox's Terms of Use, and a new README section, [Long runs and log size](README.md#long-runs-and-log-size): logged runs use about 29 GB per hour of play, so untick **Save a log of this run** for long runs.
+
 ### Fixed
 
 - **Camera spinning in circles** — after a block the ball often flies off far away, and the camera kept searching for up to 6 seconds, restarted by every brief detection. A search for a ball that isn't after you is now limited to about a second in total, and resets only once the ball is properly tracked again. Searching while you're targeted is unchanged.
