@@ -353,12 +353,11 @@ With **Save a log of this run** on, the log records each switch between playing,
 
 ### Auto vote
 
-Between rounds, Blade Ball lets players vote for the next gamemode. With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** vote button on screen and clicks it once. It moves the cursor there, clicks, and puts the cursor back. It votes again in the next lobby visit, after the round. Gamemodes are random, so Classic is the only choice for now. The default is `None`, which never clicks anything.
+Between rounds, while the "Game Starting in N Seconds" countdown runs, Blade Ball shows a **"Vote for the next gamemode"** panel near the top of the screen with three modes to choose from (for example Classic / 2 Teams / Randomizer, or Classic / No Abilities / 4 Teams). With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** button on that panel and clicks it once. It moves the cursor there, clicks, and puts the cursor back. It votes again in the next lobby, after the round. The other modes change from round to round, so Classic is the only choice for now. The default is `None`, which never clicks anything.
 
-It finds the button from a picture of it, `assets/vote_classic.png`, anywhere on screen. **That picture isn't in the repo yet**, because the vote screen hasn't been captured yet. Until it's there, Auto vote says *"auto vote off: missing assets/vote_classic.png"* and does nothing. To add it:
+It recognises the button from a picture of its label, `assets/vote_classic.png`, searching the top-middle part of the screen where the panel appears. It matches in greyscale at full size, which takes about 12 ms, and only while it's in the lobby. On every saved frame so far, frames showing the vote panel scored at least 0.995 and all others at most 0.37 (the cut-off is 0.8), whichever modes were offered alongside Classic.
 
-1. Run the AI with **Auto** and **Save a log of this run** on, and let it sit in the lobby while the vote is showing. In the lobby it saves one screenshot per second into the run's `_frames` folder. You can also take your own screenshot of the vote screen.
-2. Crop just the **Classic** vote button out of a screenshot at full size, and save it as `assets/vote_classic.png`.
+If Blade Ball restyles the vote panel, take a screenshot of it, crop the "Classic" label out of the button at full size, and save it over `assets/vote_classic.png`. While Auto waits in the lobby with **Save a log of this run** on, it also saves one screenshot per second into the run's `_frames` folder, which is handy for this.
 
 ## Camera control
 

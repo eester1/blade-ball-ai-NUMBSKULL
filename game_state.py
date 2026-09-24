@@ -74,11 +74,19 @@ class LobbyDetector:
 
 
 # --- Gamemode vote ---------------------------------------------------------
-# Between rounds Blade Ball lets players vote for the next gamemode. Auto can
-# click one for you: it looks for a picture of that mode's vote button,
-# assets/vote_<mode>.png, anywhere on screen.
+# Between rounds, a "Vote for the next gamemode" panel appears near the top
+# of the screen with three modes (e.g. Classic / 2 Teams / Randomizer, or
+# Classic / No Abilities / 4 Teams) and a "Game Starting in N Seconds"
+# countdown. Auto can click one for you: it looks for a picture of that
+# mode's button, assets/vote_<mode>.png (the button's label cut from a
+# screenshot), in the part of the screen where the panel shows up.
+# It's matched in greyscale at full size -- the lettering is too thin to
+# survive halving. On every saved frame so far, frames with the vote panel
+# scored >= 0.995 and all others <= 0.37; ~12 ms per check.
 VOTE_MODES = ("classic",)
 VOTE_THRESHOLD = 0.8
+VOTE_REGION = (0.28, 0.12, 0.72, 0.42)   # x0, y0, x1, y1 as fractions of the screen
+VOTE_SIZES = (0.95, 1.0, 1.05)
 
 
 def vote_template_path(mode):
@@ -90,7 +98,7 @@ class VoteButton:
 
     def __init__(self, mode):
         self.mode = mode
-        template = cv2.imread(str(vote_template_path(mode)))
+        template = cv2.imread(str(vote_template_path(mode)), cv2.IMREAD_GRAYSCALE)
         if template is None:
             raise FileNotFoundError(f"missing {vote_template_path(mode)}")
         self._template = template
@@ -98,21 +106,23 @@ class VoteButton:
 
     def _templates_for(self, frame_h):
         if frame_h not in self._templates:
-            base = frame_h / 1080 * WORK_SCALE
+            base = frame_h / 1080
             self._templates[frame_h] = [
                 cv2.resize(self._template, None, fx=base * s, fy=base * s,
-                           interpolation=cv2.INTER_AREA) for s in SIZES]
+                           interpolation=cv2.INTER_AREA) for s in VOTE_SIZES]
         return self._templates[frame_h]
 
     def find(self, frame_bgr):
         """(x, y) of the button's center in frame pixels, or None."""
-        small = cv2.resize(frame_bgr, None, fx=WORK_SCALE, fy=WORK_SCALE,
-                           interpolation=cv2.INTER_AREA)
+        h, w = frame_bgr.shape[:2]
+        x0, y0 = int(VOTE_REGION[0] * w), int(VOTE_REGION[1] * h)
+        region = cv2.cvtColor(frame_bgr[y0:int(VOTE_REGION[3] * h), x0:int(VOTE_REGION[2] * w)],
+                              cv2.COLOR_BGR2GRAY)
         best, best_xy = 0.0, None
-        for t in self._templates_for(frame_bgr.shape[0]):
-            result = cv2.matchTemplate(small, t, cv2.TM_CCOEFF_NORMED)
-            _, score, _, (x, y) = cv2.minMaxLoc(result)
+        for t in self._templates_for(h):
+            if t.shape[0] > region.shape[0] or t.shape[1] > region.shape[1]:
+                continue
+            _, score, _, (x, y) = cv2.minMaxLoc(cv2.matchTemplate(region, t, cv2.TM_CCOEFF_NORMED))
             if score > best:
-                best = score
-                best_xy = ((x + t.shape[1] / 2) / WORK_SCALE, (y + t.shape[0] / 2) / WORK_SCALE)
+                best, best_xy = score, (x0 + x + t.shape[1] / 2, y0 + y + t.shape[0] / 2)
         return best_xy if best >= VOTE_THRESHOLD else None

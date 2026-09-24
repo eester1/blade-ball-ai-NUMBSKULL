@@ -5,7 +5,7 @@
 ### New
 
 - **Auto** — tick it (or use `--auto`) and the AI plays round after round by itself. It plays while you're in a round, lets go of everything and waits in the lobby after you die or the round ends, and starts again when the next round begins. It recognises the lobby from Blade Ball's green TRADE menu button (`game_state.py`). It's off unless you choose it: the tick box starts unticked every time the panel opens. See [Auto](README.md#auto).
-- **Auto vote** — with Auto on, set it to `Classic` (`--vote classic`) and the AI votes for the Classic gamemode each time it's in the lobby. The default is `None`. It needs a picture of the Classic vote button (`assets/vote_classic.png`), which hasn't been captured yet; see [Auto vote](README.md#auto-vote).
+- **Auto vote** — with Auto on, set it to `Classic` (`--vote classic`) and the AI votes for the Classic gamemode each time it's in the lobby. The default is `None`. It finds the Classic button on the "Vote for the next gamemode" panel and clicks it once per lobby visit; see [Auto vote](README.md#auto-vote).
 - **Lobby screenshots in logs** — while Auto waits in the lobby with logging on, it saves one screenshot per second.
 - **Choose your stop key** — pick the key that stops the AI from inside Roblox in the panel (End, Home, Delete, Page Up/Down, Pause, Scroll Lock, F6–F12), or with `--quit-key`. The panel's Stop button presses the same key.
 - **Only acts in Roblox** — the AI sends input only while the Roblox window is the active window. Click into another window and it lets go of everything and waits.
