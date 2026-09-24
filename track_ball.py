@@ -168,10 +168,16 @@ DEFAULT_CONFIG = {
     # mostly falls outside it. The highlight is a slightly pinkish red (hue
     # 170-180); orange-red things near your feet -- dirt, lava, a pumpkin
     # head -- sit on the other side of pure red (hue ~5-15) and don't count.
+    # The highlight is also *bright*: on an orange-lit desert map, a dark
+    # outfit lit by the orange sky and a pink sword's glow turned a dim
+    # reddish-purple that passed the hue check and scored 0.1-0.23 while
+    # not targeted -- constant false alarms. At brightness >= 110 those drop
+    # to ~0.04 (max 0.11) while real highlights barely change (median 0.36
+    # -> 0.35).
     "self_highlight_roi": {"x0": 0.47, "y0": 0.45, "x1": 0.53, "y1": 0.60},
     "self_highlight_hue_min": 170,
     "self_highlight_sat_min": 120,
-    "self_highlight_val_min": 60,
+    "self_highlight_val_min": 110,
     # Score above which you count as targeted. Real highlights scored
     # 0.15-0.36 in live logs; orange dirt and a highlighted neighbor, <= 0.03.
     # While targeted, a red ball on screen is trusted immediately rather than
