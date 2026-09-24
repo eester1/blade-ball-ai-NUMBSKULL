@@ -110,6 +110,14 @@ DEFAULT_CONFIG = {
     # check; below this radius, recovering a core just turns irregular
     # specks into extra decoys.
     "core_min_radius": 12,
+    # A white core must look like the ball itself: almost pure white. Gaps
+    # of pale sky between rocks or trees made convincing cores (tinted
+    # blue/purple, saturation 28-53, or dim, brightness 193-196), and a
+    # track that slid onto one kept "continuing" on it while the real ball
+    # came in -- 3 deaths. Real white balls: saturation 3 typically, 18 at
+    # the 95th percentile; brightness 233+ for 95% of them.
+    "core_max_sat": 22,
+    "core_min_val": 215,
     # The ball's apparent size changes smoothly -- it can't go from radius 40
     # to 6 in a fifth of a second. A core continues the track only if its
     # radius is within this factor range of the tracked ball's last radius
@@ -277,6 +285,8 @@ def find_ball_candidates(frame_bgr, cfg):
                 continue
             failed.append(c)
             core = _round_core(mask, blob["solid"], blob["bx"], blob["by"], blob["area"], cfg)
+            if core is not None and state == "idle" and not _core_is_white(hsv, core, cfg):
+                core = None
             if core is not None and not on_own_character(core[0], core[1]):
                 cx, cy, radius = core
                 cores.append((cfg["min_circularity"], cx, cy, state, radius))
@@ -331,6 +341,14 @@ def _blob(contour, mask, cfg):
         "radius": (area / np.pi) ** 0.5,
         "area": area, "solid": solid, "bx": bx, "by": by,
     }
+
+
+def _core_is_white(hsv, core, cfg):
+    """Whether the middle of a white core is ball-white (see core_max_sat)."""
+    x, y, radius = int(core[0]), int(core[1]), int(core[2])
+    k = max(2, radius // 2)
+    patch = hsv[max(0, y - k):y + k + 1, max(0, x - k):x + k + 1].reshape(-1, 3)
+    return patch[:, 1].mean() <= cfg["core_max_sat"] and patch[:, 2].mean() >= cfg["core_min_val"]
 
 
 def _round_core(mask, solid, bx, by, blob_area, cfg):

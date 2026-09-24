@@ -86,7 +86,9 @@ def score(path, cfg):
         counted_taps.update(id(e) for e in ep_taps)
         targeted_again = i + 1 < len(episodes) and \
             episodes[i + 1][0]["t"] - end <= SURVIVAL_WINDOW_S
-        if any(0 <= lt - end <= LOBBY_AFTER_S for lt in lobby_times):
+        # Only the last episode before going to the lobby can be the death.
+        next_start = episodes[i + 1][0]["t"] if i + 1 < len(episodes) else float("inf")
+        if any(0 <= lt - end <= LOBBY_AFTER_S and lt < next_start for lt in lobby_times):
             result = "died/round over"
         elif not ep_taps:
             result = "no tap"
