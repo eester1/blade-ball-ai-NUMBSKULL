@@ -187,8 +187,14 @@ CAMERA_SEARCH_SPEED = 1.5
 # about a frame late). If it does turn on you, your red highlight starts
 # the fast search anyway.
 CAMERA_FAR_RADIUS = 10
-# ...but stop after this long: it's probably between rounds, not lost.
-CAMERA_SEARCH_MAX_S = 6.0
+# A lost ball that isn't after you gets this many seconds of sweeping in
+# total, then the camera waits -- until the ball is steadily tracked again
+# (a one-frame detection, often a false one, doesn't reset it). Searching
+# for up to 6s, restarted by every brief detection, spun the camera round
+# in full circles: after a block the ball often flies off far, where it's
+# small and missed even when the sweep passes it. If it turns on you, your
+# red highlight starts the (unlimited, faster) targeted search anyway.
+CAMERA_SEARCH_MAX_S = 1.0
 # Drag speed in "mouse" mode, in mouse counts per second.
 CAMERA_MOUSE_SPEED = 900
 # Mouse mode: once the dragged cursor is this many pixels from the anchor,
@@ -343,13 +349,13 @@ class AIController:
         self.last_offset = 0.0    # where the ball was heading on screen (-1..1 = left..right edge)
         self.searching = False    # the camera is sweeping to find a lost ball
         self.last_far = False     # the ball was far away and not after you (CAMERA_FAR_RADIUS)
+        self.idle_search_from = None  # when the current idle search began (see CAMERA_SEARCH_MAX_S)
         self.prev_motion = None   # (t, x, distance to character) of the last detection
         self.screen_vx = 0.0      # ball's sideways speed on screen, px/s
         self.approach = 0.0       # how fast the ball closes in on your character, px/s
         self.motion_t = 0.0       # when those two were last measured
         self.growth = 0.0         # how fast the ball's radius grows, px/s
         self.missing_streak = 0
-        self.missing_since = None
         self.stale_count = 0      # consecutive frames barely-unchanged in position
         self.pending = None       # candidate awaiting next-frame confirmation
         self.track_len = 0        # consecutive frames the ball was followed smoothly
@@ -543,6 +549,7 @@ class AIController:
             if self.searching:
                 self.camera.stop()
                 self.searching = False
+            self.idle_search_from = None
             # Where it's heading, not just where it is (see CAMERA_LEAD_S) --
             # unless it's far away and not after you (CAMERA_FAR_RADIUS).
             self.last_far = ball[3] < CAMERA_FAR_RADIUS and not targeted
@@ -559,8 +566,11 @@ class AIController:
         elif ball is None:
             exited = abs(self.last_offset) >= CAMERA_EXIT_OFFSET and not self.last_far
             after = CAMERA_SEARCH_AFTER_EXIT_FRAMES if exited else CAMERA_SEARCH_AFTER_FRAMES
-            if self.missing_streak >= after and now - self.missing_since <= CAMERA_SEARCH_MAX_S:
-                self.search(now, fast=False)
+            if self.missing_streak >= after:
+                if self.idle_search_from is None:
+                    self.idle_search_from = now
+                if now - self.idle_search_from <= CAMERA_SEARCH_MAX_S:
+                    self.search(now, fast=False)
         # else: a detection that just jumped here -- often a decoy (a sparkle,
         # a lantern, another player's cosmetic), so don't swing the camera
         # toward it until it's held up for a few frames.
@@ -647,8 +657,6 @@ class AIController:
                 desired = tapped = set()
 
                 if ball is None:
-                    if self.missing_streak == 0:
-                        self.missing_since = capture_t
                     self.missing_streak += 1
                     if self.missing_streak >= MISSING_FRAMES_RESET:
                         self.release_all()
