@@ -13,9 +13,13 @@ USAGE:
     python score_logs.py a.jsonl b.jsonl  # specific logs
     python score_logs.py --all            # every log found, plus a total
 
-How an episode is classified. The log can't see "you died" directly -- a
-death ends your highlight just like a successful block does -- but being
-targeted again soon afterwards proves you were still alive:
+How an episode is classified. Logs from the auto mode (play_live.py waits
+in the lobby between rounds) mark when it went to the lobby, so:
+  - "died/round over": back in the lobby within LOBBY_AFTER_S of the
+    episode -- you died (or the round ended, if you'd just won it).
+Otherwise the log can't see "you died" directly -- a death ends your
+highlight just like a successful block does -- but being targeted again
+soon afterwards proves you were still alive:
   - "survived": block was tapped, and you were targeted again within
     SURVIVAL_WINDOW_S (a death keeps you out until the next round).
   - "blocked or died": tapped and the highlight ended right after, but no
@@ -39,6 +43,8 @@ EPISODE_MIN_FRAMES = 3   # shorter highlight blips are flicker, not a targeting
 TAP_MARGIN_S = 0.3       # taps this close to an episode's edges count toward it
 BLOCK_RESULT_S = 0.8     # highlight ending this soon after a tap = the tap landed in time
 SURVIVAL_WINDOW_S = 15   # targeted again within this = you were still alive
+LOBBY_AFTER_S = 3        # in the lobby this soon after an episode = died (or round over)
+RESULTS = ("survived", "died/round over", "blocked or died", "tapped, unclear", "no tap")
 
 
 def character_point(cfg, width=1920, height=1080):
@@ -52,7 +58,10 @@ def load(path):
 
 
 def score(path, cfg):
-    entries = load(path)
+    lines = load(path)
+    # Phase changes ("playing", "lobby", "no_focus") are logged between frames.
+    lobby_times = [e["t"] for e in lines if e.get("event") == "lobby"]
+    entries = [e for e in lines if "event" not in e]
     if not entries or "self_red" not in entries[0] or "tapped" not in entries[0]:
         return None  # made by an older play_live.py that didn't log these
     threshold = cfg["self_target_threshold"]
@@ -77,7 +86,9 @@ def score(path, cfg):
         counted_taps.update(id(e) for e in ep_taps)
         targeted_again = i + 1 < len(episodes) and \
             episodes[i + 1][0]["t"] - end <= SURVIVAL_WINDOW_S
-        if not ep_taps:
+        if any(0 <= lt - end <= LOBBY_AFTER_S for lt in lobby_times):
+            result = "died/round over"
+        elif not ep_taps:
             result = "no tap"
         elif end - ep_taps[-1]["t"] > BLOCK_RESULT_S:
             result = "tapped, unclear"
@@ -109,8 +120,7 @@ def score(path, cfg):
 
 def summarize(results):
     episodes = [r for res in results for r in res["episodes"]]
-    counts = {k: sum(r["result"] == k for r in episodes)
-              for k in ("survived", "blocked or died", "tapped, unclear", "no tap")}
+    counts = {k: sum(r["result"] == k for r in episodes) for k in RESULTS}
     taps = sum(res["taps"] for res in results)
     wasted = sum(res["wasted_taps"] for res in results)
     return episodes, counts, taps, wasted

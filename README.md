@@ -46,9 +46,12 @@ This opens a window with a button for everything, so you never have to type the 
   | Banner | Meaning |
   |---|---|
   | grey — *Nothing running* | Nothing is running |
-  | yellow — *loaded but NOT playing yet* | The AI or recorder is waiting for you to press **Insert** in Roblox |
-  | green — *AI is PLAYING* | The AI is pressing keys for you |
-  | yellow — *AI is PAUSED* | You pressed Insert again; press it once more to resume |
+  | blue — *AI is ON — click into Roblox* | The AI has started and is working out whether you're in a round |
+  | green — *AI is PLAYING* | You're in a round and the AI is pressing keys for you |
+  | blue — *AI is waiting in the lobby* | You died or the round ended; it starts again by itself when the next round begins |
+  | yellow — *AI is ON but waiting for Roblox* | Another window is active; it only plays while Roblox is the active window |
+  | yellow — *AI is PAUSED* | You pressed Insert; press it again to resume |
+  | yellow — *loaded but NOT playing yet* | The recorder (or the AI with *Play rounds by itself* unticked) is waiting for you to press **Insert** in Roblox |
   | red — *RECORDING* | Your gameplay is being recorded |
   | blue | Camera test or model update in progress |
 
@@ -56,19 +59,21 @@ This opens a window with a button for everything, so you never have to type the 
   - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
   - **Invert camera** — tick this if the camera test turns the wrong way.
   - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored and problems diagnosed. Leave it on.
-  - **Start AI (then press Insert in Roblox)** — loads the AI. It stays **off** until you press Insert in Roblox.
+  - **Play rounds by itself** (ticked by default) — the AI plays each round, waits in the lobby after you die or the round ends, and starts again when the next round begins. Untick it to switch the AI on and off yourself with Insert instead.
+  - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
+  - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
 - **Record your own gameplay** — **Start recorder (then press Insert in Roblox)** loads the recorder. Insert starts and stops each recording.
 - **Update the AI from recordings** — **Update model** teaches the AI from everything in `recordings/` (see below). The options:
   - **Re-track all recordings** — tracks the ball again in every recording, not just new ones. Slow; only needed after the ball detection code changes.
   - **Also retrain the ball detector** — retrains the learned ball detector too. Slow; worth doing after recording new sessions, especially on new maps.
 - **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)) and **Open logs folder**. These work at any time, even while the AI is playing.
-- **Stop** — ends whatever is running, safely: it presses End (the scripts' own quit key, which lets go of every held key and button), and only force-closes the script if it doesn't respond.
+- **Stop** — ends whatever is running, safely: it presses the script's own quit key (your stop key for the AI, End for the others), which lets go of every held key and button, and only force-closes the script if it doesn't respond.
 - **Output box** — everything the running script prints.
 
 Only one script runs at a time. While one is running, the other buttons are greyed out, and a message says to press **Stop** first. Scoring works at any time.
 
-**Hotkeys in Roblox** (the AI and recorder listen for these even though the panel isn't focused): **Insert** turns the AI or recording on and off, and **End** quits the script.
+**Hotkeys in Roblox** (the AI and recorder listen for these even though the panel isn't focused): **Insert** pauses and resumes the AI, or starts and stops a recording. Your **stop key** quits the AI, and **End** quits the recorder.
 
 ### First time: check the camera
 
@@ -78,12 +83,17 @@ Only one script runs at a time. While one is running, the other buttons are grey
 
 ### Let the AI play
 
-1. Press **Start AI (then press Insert in Roblox)**. The banner turns yellow: the AI is loaded but **not playing yet**.
-2. Click into Roblox and press **Insert**. The banner turns green, and the AI is playing.
-3. Press **Insert** again to pause it, whenever you want to play yourself. Press **End** in Roblox, or **Stop** in the panel, to quit.
+1. Pick a **Stop key** (End is the default) and press **Start AI**.
+2. Click into Roblox. From here it runs by itself:
+   - **In a round** the banner is green and the AI plays.
+   - **When you die or the round ends** you're back in the lobby. The AI stops pressing anything, and the banner turns blue: *waiting in the lobby*.
+   - **When the next round starts** it notices, and plays again.
+3. Press **Insert** to pause it whenever you want to play yourself, and again to resume. Press your **stop key** in Roblox, or **Stop** in the panel, to quit.
 4. Afterwards, press **Score latest run** to see how often it got targeted, blocked and survived.
 
-While it's on, the AI sends real key and mouse input to whatever window is focused, so keep Roblox focused.
+**How it knows where you are:** Blade Ball's left-hand menu shows a green **TRADE** button whenever you're not in a round (in the lobby, in the practice area, or a moment after you die) and hides it while you're alive in a round. `game_state.py` looks for that button. On every saved frame so far it told the two apart without a single mistake.
+
+**Safety:** the AI only sends input while the **Roblox window is the active window**. Click into any other window, like this panel, and it lets go of everything and waits, with the banner saying so. It won't type into other programs by accident.
 
 ### Teach the AI with your own gameplay
 
@@ -197,7 +207,9 @@ Switch to Roblox within 3 seconds. The camera should turn to look left for a sec
 python play_live.py model.joblib
 ```
 
-- **Insert** toggles AI control on/off (starts off). **End** quits immediately and always releases every key/button first, so nothing gets stuck held down.
+- **Plays rounds by itself:** it plays while you're in a round, and waits in the lobby after you die or the round ends (see `game_state.py`). `--no-auto` switches that off: it then starts off, and **Insert** turns it on. **Insert** always pauses and resumes it.
+- **End** quits immediately (`--quit-key home`, `f8` and so on for a different key) and always releases every key/button first, so nothing gets stuck held down.
+- It only sends input while the Roblox window is the active window.
 - **Safety:** while ON, this sends real keyboard/mouse input to whatever window is focused. Keep Roblox focused and your hand near the keyboard the first few times, in case it does something unwanted — End stops everything instantly.
 - `--camera keys|mouse|off` and `--camera-invert` pick how the camera is turned (whatever worked in step 6).
 - **Block timing is decided by distance to your character.** The model gets block timing wrong in both directions: it once tapped with the ball ~1.1 s away (block used up, died), and right at contact it often *doesn't* want to block, since in the recordings you'd already pressed earlier. So a block only goes through once the ball is close to your character: within `BLOCK_MAX_CHAR_DIST` (200 px) on screen *and* at least `BLOCK_MIN_RADIUS` (14 px) in apparent size — every successful live block was 121–191 px away and every contact ≥ 15 px in radius, while a ball far away in front of you sits just above your character on screen (in practice mode it spammed block for 3 s at radius 8–10). A ball coming head-on stays up the screen until the last instant, so a big ball (≥ `BLOCK_BIG_RADIUS`, 45) counts from `BLOCK_BIG_MAX_CHAR_DIST` (320 px). "Close" is judged 0.1 s ahead (`BLOCK_LEAD_S`, at most 150 px closer): a fast ball covers 100–180 px per frame at the end, so it can go from "too far" to hitting you between two frames — the likely deaths in the 2026-09-23 runs were taps one frame too late like that. Size is judged ahead the same way, from how fast the ball is growing (`BLOCK_MAX_GROWTH_LEAD`): a ball coming head-on barely moves on screen and just grows — radius 12 → 14 → 17 → 24 in its last three frames in one death, where the size gate held the block back a frame. While you're targeted, the closing speed is measured between two red detections even if tracking broke in between (it does, when the ball rushes in during a camera turn). Once close, it blocks if the model wants to **or** if you're targeted and the ball is red. Raise the distances if it blocks too late, lower them if too early.
@@ -313,6 +325,7 @@ python score_logs.py --all    # every log, plus a total
 
 Lists every time you were targeted during a run, whether block was tapped, when and how far away the ball was, and how it ended, plus taps made while you weren't targeted. The log can't see "you died" directly (a death ends your red highlight just like a successful block), so results are:
 
+- **died/round over** — back in the lobby within 3 s (only in runs where the AI played rounds by itself, which records when it went to the lobby). You died, or the round ended because you'd just won it
 - **survived** — tapped, and you were targeted again soon after, so you were alive
 - **blocked or died** — tapped in time, but no later evidence either way
 - **tapped, unclear** — tapped, but the highlight stayed on long after (possibly too early)

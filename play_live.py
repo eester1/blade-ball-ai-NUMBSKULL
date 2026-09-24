@@ -13,10 +13,14 @@ SETUP (run once, if you haven't already):
 USAGE:
     python play_live.py model.joblib
 
-    - Press Insert to toggle AI control ON/OFF. Starts OFF -- nothing
-      happens until you turn it on.
-    - Press End to quit immediately. This always releases every key/
-      button first, so nothing gets left stuck held down.
+    - Plays by itself: it plays each round, waits in the lobby after you
+      die or the round ends, and starts again when the next round begins
+      (it can tell from Blade Ball's menu -- see game_state.py). It only
+      ever acts while the Roblox window is the active one.
+      --no-auto turns that off: then it starts OFF and Insert turns it on.
+    - Insert pauses/resumes it.
+    - End quits immediately (--quit-key picks another key). This always
+      releases every key/button first, so nothing gets left stuck held down.
 
     Camera control (see CAMERA_* settings below):
     - --camera keys   (default) turns with the Left/Right arrow keys,
@@ -56,6 +60,7 @@ import numpy as np
 from pynput import keyboard, mouse
 
 import ball_classifier
+import game_state
 import track_ball
 from features import FeatureTracker
 
@@ -127,6 +132,11 @@ BLOCK_MAX_LEAD_PX = 150
 # size is judged ahead the same way, from how fast it's growing, by at
 # most half again its current size.
 BLOCK_MAX_GROWTH_LEAD = 0.5
+# A red ball this big while you're targeted is on top of you, wherever it
+# is on screen: one coming from behind the camera shows up huge at the
+# bottom of the screen, well away from your character (a death: radius 97,
+# 408px away, never blocked).
+BLOCK_HUGE_RADIUS = 70
 
 # Your character's red "targeted" tint can blink off while the ball is
 # still coming. For this long after last seeing it, keep counting as
@@ -136,7 +146,45 @@ BLOCK_MAX_GROWTH_LEAD = 0.5
 TARGET_LATCH_S = 1.5
 
 TOGGLE_KEY = keyboard.Key.insert
-QUIT_KEY = keyboard.Key.end
+DEFAULT_QUIT_KEY = "end"
+
+# Playing by itself (see game_state.py): whether you're in a round is
+# checked every LOBBY_CHECK_EVERY frames while playing (every frame while
+# waiting), and it only switches after this many checks in a row agree --
+# so one odd frame (a menu flicker, a flash over the button) can't pause
+# or start it.
+LOBBY_CHECK_EVERY = 3
+LOBBY_CONFIRM_CHECKS = 2
+ROUND_CONFIRM_CHECKS = 3
+
+# What's shown for each phase when it changes (the control panel watches
+# for these lines).
+PHASE_MESSAGES = {
+    "playing": "[in a round -- AI playing]",
+    "lobby": "[in the lobby -- waiting for the next round]",
+    "no_focus": "[waiting for the Roblox window -- click into Roblox]",
+}
+
+
+def parse_key(name):
+    """A pynput key from a name like "end", "f8", "page_down" or "x"."""
+    name = name.strip().lower().replace(" ", "_")
+    if hasattr(keyboard.Key, name):
+        return getattr(keyboard.Key, name)
+    if len(name) == 1:
+        return keyboard.KeyCode.from_char(name)
+    raise ValueError(f"unknown key {name!r} (try end, home, delete, page_down, f8 ...)")
+
+
+def roblox_focused():
+    """Whether the active window is Roblox -- the AI never sends input
+    anywhere else (e.g. into the control panel right after Start AI)."""
+    if sys.platform != "win32":
+        return True
+    user32 = ctypes.windll.user32
+    title = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(user32.GetForegroundWindow(), title, 256)
+    return "roblox" in title.value.lower()
 
 # If the ball goes undetected for this many consecutive frames, release
 # every held action as a safety net (probably out of a round, or lost).
@@ -213,7 +261,8 @@ def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0, 
     radius += min(max(growth, 0.0) * BLOCK_LEAD_S, radius * BLOCK_MAX_GROWTH_LEAD)
     close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= BLOCK_MIN_RADIUS) or \
         (distance <= BLOCK_BIG_MAX_CHAR_DIST and radius >= BLOCK_BIG_RADIUS)
-    return close and (model_wants or (targeted and state == "targeting"))
+    coming = targeted and state == "targeting"
+    return (close and (model_wants or coming)) or (coming and radius >= BLOCK_HUGE_RADIUS)
 
 
 class _MOUSEINPUT(ctypes.Structure):
@@ -316,7 +365,7 @@ class Camera:
 
 class AIController:
     def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None,
-                 use_classifier=True):
+                 use_classifier=True, auto=True, quit_key=DEFAULT_QUIT_KEY):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
@@ -337,7 +386,15 @@ class AIController:
         self.ms = mouse.Controller()
         self.camera = Camera(camera_method, camera_invert, self.kb, self.ms)
 
-        self.enabled = False
+        self.quit_key_name = quit_key
+        self.quit_key = parse_key(quit_key)
+        # Plays by itself between rounds if the lobby can be recognized.
+        self.lobby = game_state.LobbyDetector() if auto else None
+        self.enabled = self.lobby is not None  # auto mode starts armed
+        self.phase = None          # "playing", "lobby", "no_focus" or None (not yet known)
+        self.lobby_streak = 0      # checks in a row that saw the lobby
+        self.round_streak = 0      # ... and that saw a round
+        self.frame_count = 0
         self.quit = False
         self._lock = threading.Lock()
 
@@ -381,21 +438,67 @@ class AIController:
                 self.enabled = not self.enabled
                 state = self.enabled
                 # Start fresh -- tracking state from before a pause is stale
-                # (and would block the camera search from kicking in).
-                self.missing_streak = 0
-                self.prev_ball = None
-                self.pending = None
-                self.targeted_at = None
+                # (and would block the camera search from kicking in) -- and
+                # work out again whether we're in a round.
+                self.reset_tracking()
+                self.phase = None
+                self.lobby_streak = self.round_streak = 0
             print(f"[AI {'ENABLED' if state else 'disabled'}]")
             if not state:
                 self.release_all()
             return
-        if key == QUIT_KEY:
+        if key == self.quit_key:
             with self._lock:
                 self.quit = True
             self.release_all()
             print("[quitting]")
             return False
+
+    def reset_tracking(self):
+        """Forget the ball -- after a pause or between rounds it's stale."""
+        self.missing_streak = 0
+        self.prev_ball = None
+        self.pending = None
+        self.targeted_at = None
+        self.track_len = 0
+        self.stale_count = 0
+        self.prev_motion = None
+        self.screen_vx = self.approach = self.growth = 0.0
+        self.idle_search_from = None
+        self.searching = False
+        self.last_offset = 0.0
+        self.features.reset()
+
+    def set_phase(self, phase, t):
+        """Switch between playing / waiting in the lobby / waiting for the
+        Roblox window, letting go of everything when it stops playing."""
+        if phase == self.phase:
+            return
+        self.phase = phase
+        if phase != "playing":
+            self.release_all()
+            self.reset_tracking()
+        # Without auto mode it can't tell rounds from the lobby.
+        print("[AI playing]" if phase == "playing" and self.lobby is None
+              else PHASE_MESSAGES[phase])
+        if self._log_file is not None:
+            self._log_file.write(json.dumps({"t": t, "event": phase}) + "\n")
+            self._log_file.flush()
+
+    def check_round(self, frame_bgr, t):
+        """Auto mode: pause in the lobby, play when a round starts."""
+        if self.phase == "playing" and self.frame_count % LOBBY_CHECK_EVERY:
+            return
+        if self.lobby.in_lobby(frame_bgr):
+            self.lobby_streak += 1
+            self.round_streak = 0
+        else:
+            self.round_streak += 1
+            self.lobby_streak = 0
+        if self.lobby_streak >= LOBBY_CONFIRM_CHECKS:
+            self.set_phase("lobby", t)
+        elif self.round_streak >= ROUND_CONFIRM_CHECKS:
+            self.set_phase("playing", t)
 
     # --- action press/release -----------------------------------------
 
@@ -624,18 +727,35 @@ class AIController:
         roi = self.cfg["self_highlight_roi"]
         character_xy = ((roi["x0"] + roi["x1"]) / 2 * width, (roi["y0"] + roi["y1"]) / 2 * height)
 
-        print("Insert = toggle AI on/off, End = quit.")
-        print("Starting in OFF state -- press Insert when you're ready.")
+        quit_name = self.quit_key_name.replace("_", " ").title()
+        if self.lobby is not None:
+            print(f"Auto mode: plays each round by itself and waits in the lobby between "
+                  f"them. Insert = pause/resume, {quit_name} = quit.")
+        else:
+            print(f"Insert = toggle AI on/off, {quit_name} = quit.")
+            print("Starting in OFF state -- press Insert when you're ready.")
 
         while not self.quit:
             start = time.time()
             with self._lock:
                 enabled = self.enabled
 
-            if enabled:
+            if enabled and not roblox_focused():
+                self.set_phase("no_focus", start)
+            elif enabled:
+                self.frame_count += 1
                 self.camera.update(start)
                 capture_t = time.time()
                 frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
+                if self.lobby is not None:
+                    if self.phase == "no_focus":
+                        self.phase = None  # back in Roblox: work out where we are
+                    self.check_round(frame_bgr, capture_t)
+                else:
+                    self.set_phase("playing", capture_t)
+                if self.phase != "playing":
+                    time.sleep(max(0.0, interval - (time.time() - start)))
+                    continue
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
                 if self.self_red >= self.cfg["self_target_threshold"]:
                     self.targeted_at = (capture_t, self.self_red)
@@ -733,7 +853,17 @@ def main():
                              "save the captured frames into a <log>_frames/ folder. With no "
                              "name, a new timestamped file is made in live_logs/ each run, "
                              "so earlier logs are never overwritten.")
+    parser.add_argument("--no-auto", action="store_true",
+                        help="Don't pause by itself in the lobby: start OFF and only play while "
+                             "toggled on with Insert")
+    parser.add_argument("--quit-key", default=DEFAULT_QUIT_KEY,
+                        help="Key that quits the AI (default: end). E.g. home, delete, "
+                             "page_down, f8")
     args = parser.parse_args()
+    try:
+        parse_key(args.quit_key)
+    except ValueError as e:
+        parser.error(str(e))
     if args.log == "auto":
         Path("live_logs").mkdir(exist_ok=True)
         args.log = str(Path("live_logs") / f"live_{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
@@ -746,7 +876,8 @@ def main():
         parser.error("Provide model.joblib (or use --camera-test).")
 
     controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
-                              use_classifier=not args.no_classifier)
+                              use_classifier=not args.no_classifier, auto=not args.no_auto,
+                              quit_key=args.quit_key)
     print("Ball classifier: " + ("on" if controller.scorer else
                                  "off" if args.no_classifier else "not trained yet (off)"))
     if args.log:

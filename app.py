@@ -8,7 +8,7 @@ USAGE:
 It runs the same scripts you'd run by hand (play_live.py, record_gameplay.py,
 track_ball.py, ball_classifier.py, build_dataset.py, train_model.py,
 score_logs.py) and shows their output in the window. The in-game hotkeys still work while they run:
-Insert toggles, End quits.
+Insert pauses/resumes, and the stop key chosen in the panel (End by default) quits the AI.
 """
 
 import json
@@ -31,14 +31,23 @@ PYTHON = sys.executable
 
 
 # The big banner at the top of the panel: (text, background, text color).
-# Starting the AI or the recorder only *loads* it -- nothing happens until
-# Insert is pressed in Roblox -- so the banner says plainly which state it's in.
+# It says plainly what the AI or recorder is doing right now -- loaded but
+# waiting, playing, paused, recording... ({key} = the AI's stop key.)
 BANNERS = {
     "idle": ("Nothing running.", "#e4e4e4", "#555555"),
     "ai_loading": ("Loading the AI...", "#fff1c2", "#6b4d00"),
     "ai_off": ("AI is loaded but NOT playing yet.\n"
                "Switch to Roblox and press Insert to turn it on.", "#ffd966", "#4d3800"),
-    "ai_on": ("AI is PLAYING.\nInsert = pause,  End (or Stop) = quit.", "#b6e3a8", "#1e4d12"),
+    "ai_armed": ("AI is ON -- click into Roblox.\n"
+                 "It plays rounds by itself and waits in the lobby between them.",
+                 "#c9e0f7", "#123a5c"),
+    "ai_on": ("AI is PLAYING.\nInsert = pause,  {key} (or Stop) = quit.", "#b6e3a8", "#1e4d12"),
+    "ai_lobby": ("AI is waiting in the lobby.\n"
+                 "It starts by itself when the next round begins.  {key} = quit.",
+                 "#c9e0f7", "#123a5c"),
+    "ai_no_focus": ("AI is ON but waiting for Roblox.\n"
+                    "Click into the Roblox window -- it only plays while Roblox is active.",
+                    "#ffd966", "#4d3800"),
     "ai_paused": ("AI is PAUSED.\nPress Insert in Roblox to turn it back on.",
                   "#ffd966", "#4d3800"),
     "rec_loading": ("Loading the recorder...", "#fff1c2", "#6b4d00"),
@@ -57,12 +66,36 @@ BANNERS = {
 # Lines the scripts print that mean their state changed -> banner to show.
 BANNER_TRIGGERS = [
     ("Starting in OFF state", "ai_off"),
-    ("[AI ENABLED]", "ai_on"),
+    ("Auto mode:", "ai_armed"),
+    ("[AI ENABLED]", "ai_armed"),
+    ("[AI playing]", "ai_on"),
+    ("[in a round", "ai_on"),
+    ("[in the lobby", "ai_lobby"),
+    ("[waiting for the Roblox window", "ai_no_focus"),
     ("[AI disabled]", "ai_paused"),
     ("Blade Ball gameplay recorder", "rec_ready"),
     ("[recording started]", "rec_on"),
     ("[recording stopped]", "rec_saved"),
 ]
+
+
+# Keys the AI can be told to quit on: shown name -> play_live.py --quit-key.
+# Keys games rarely use, so the AI can't be stopped by accident.
+STOP_KEYS = {
+    "End": "end", "Home": "home", "Delete": "delete", "Page Up": "page_up",
+    "Page Down": "page_down", "Pause": "pause", "Scroll Lock": "scroll_lock",
+    "F6": "f6", "F7": "f7", "F8": "f8", "F9": "f9", "F10": "f10", "F12": "f12",
+}
+
+# The panel's choices (camera, stop key, ...) are remembered between runs.
+SETTINGS_PATH = HERE / "panel_settings.json"
+
+
+def load_settings():
+    try:
+        return json.loads(SETTINGS_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 def sessions_needing_tracking(retrack_all):
@@ -92,6 +125,8 @@ class App:
         self.stopping = False
         self.busy_buttons = []
 
+        self.proc_quit_key = keyboard.Key.end  # what Stop presses for the running script
+        saved = load_settings()
         pad = {"padx": 8, "pady": 4}
         main = ttk.Frame(root, padding=8)
         main.pack(fill="both", expand=True)
@@ -106,17 +141,31 @@ class App:
         play = ttk.LabelFrame(main, text="Play", padding=8)
         play.pack(fill="x", **pad)
         ttk.Label(play, text="Camera:").grid(row=0, column=0, sticky="w")
-        self.camera = tk.StringVar(value="mouse")
+        self.camera = tk.StringVar(value=saved.get("camera", "mouse"))
         ttk.Combobox(play, textvariable=self.camera, values=["mouse", "keys", "off"],
                      state="readonly", width=8).grid(row=0, column=1, sticky="w")
-        self.invert = tk.BooleanVar(value=False)
+        self.invert = tk.BooleanVar(value=saved.get("invert", False))
         ttk.Checkbutton(play, text="Invert camera", variable=self.invert).grid(row=0, column=2, sticky="w", padx=8)
-        self.log = tk.BooleanVar(value=True)
+        self.log = tk.BooleanVar(value=saved.get("log", True))
         ttk.Checkbutton(play, text="Save a log of this run", variable=self.log).grid(row=0, column=3, sticky="w")
-        self.add_button(play, "Start AI (then press Insert in Roblox)", self.start_ai).grid(row=1, column=0, columnspan=2, sticky="we", pady=4)
-        self.add_button(play, "Test camera", self.test_camera).grid(row=1, column=2, sticky="we", padx=8, pady=4)
-        ttk.Label(play, text="In Roblox: Insert = AI on/off, End = quit",
-                  foreground="gray").grid(row=2, column=0, columnspan=4, sticky="w")
+        self.auto = tk.BooleanVar(value=saved.get("auto", True))
+        ttk.Checkbutton(play, text="Play rounds by itself (waits in the lobby between rounds)",
+                        variable=self.auto, command=self.update_play_hint).grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
+        self.stop_key = tk.StringVar(value=saved.get("stop_key", "End"))
+        if self.stop_key.get() not in STOP_KEYS:
+            self.stop_key.set("End")
+        stop_box = ttk.Combobox(play, textvariable=self.stop_key, values=list(STOP_KEYS),
+                                state="readonly", width=11)
+        stop_box.grid(row=2, column=1, sticky="w")
+        stop_box.bind("<<ComboboxSelected>>", lambda _: self.update_play_hint())
+        self.add_button(play, "Start AI", self.start_ai).grid(row=3, column=0, columnspan=2, sticky="we", pady=4)
+        self.add_button(play, "Test camera", self.test_camera).grid(row=3, column=2, sticky="we", padx=8, pady=4)
+        self.play_hint = tk.StringVar()
+        ttk.Label(play, textvariable=self.play_hint, foreground="gray").grid(
+            row=4, column=0, columnspan=4, sticky="w")
+        self.update_play_hint()
 
         # --- Record -------------------------------------------------------
         record = ttk.LabelFrame(main, text="Record your own gameplay (to teach the AI)", padding=8)
@@ -178,8 +227,8 @@ class App:
         self.stopping = False
         self.set_busy(True, title)
         self.set_banner(banner)
-        self.hint.set(f"{what} is running -- press Stop (or End in Roblox) before using the "
-                      f"other buttons. Scoring works any time.")
+        self.hint.set(f"{what} is running -- press Stop before using the other buttons. "
+                      f"Scoring works any time.")
         threading.Thread(target=self._run_steps, args=(steps,), daemon=True).start()
 
     def _run_steps(self, steps):
@@ -229,7 +278,24 @@ class App:
 
     def set_banner(self, name):
         text, bg, fg = BANNERS[name]
-        self.banner.config(text=text, bg=bg, fg=fg)
+        key = self.stop_key.get() if hasattr(self, "stop_key") else "End"
+        self.banner.config(text=text.replace("{key}", key), bg=bg, fg=fg)
+
+    def update_play_hint(self):
+        key = self.stop_key.get()
+        if self.auto.get():
+            self.play_hint.set(f"Plays each round, pauses in the lobby, carries on next round. "
+                               f"In Roblox: Insert = pause/resume, {key} = stop.")
+        else:
+            self.play_hint.set(f"In Roblox: Insert = AI on/off, {key} = stop.")
+
+    def save_settings(self):
+        try:
+            SETTINGS_PATH.write_text(json.dumps({
+                "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
+                "auto": self.auto.get(), "stop_key": self.stop_key.get()}, indent=2))
+        except OSError:
+            pass  # not worth failing a start over
 
     def set_busy(self, busy, status):
         self.status.set(status)
@@ -246,8 +312,8 @@ class App:
             return
         self.status.set("Stopping...")
         kb = keyboard.Controller()
-        kb.press(keyboard.Key.end)
-        kb.release(keyboard.Key.end)
+        kb.press(self.proc_quit_key)
+        kb.release(self.proc_quit_key)
 
         def force_if_needed():
             if proc.poll() is None:
@@ -267,15 +333,23 @@ class App:
         if not (HERE / "model.joblib").exists():
             self.status.set("No model.joblib yet -- record some gameplay, then Update model.")
             return
-        argv = [PYTHON, "play_live.py", "model.joblib", "--camera", self.camera.get()]
+        self.save_settings()
+        quit_key = STOP_KEYS[self.stop_key.get()]
+        argv = [PYTHON, "play_live.py", "model.joblib", "--camera", self.camera.get(),
+                "--quit-key", quit_key]
         if self.invert.get():
             argv.append("--camera-invert")
         if self.log.get():
             argv.append("--log")
-        self.run("AI loaded -- press Insert in Roblox to turn it on.",
+        if not self.auto.get():
+            argv.append("--no-auto")
+        self.proc_quit_key = getattr(keyboard.Key, quit_key)
+        self.run("AI running." if self.auto.get() else
+                 "AI loaded -- press Insert in Roblox to turn it on.",
                  [("Starting the AI", argv)], "The AI", "ai_loading")
 
     def test_camera(self):
+        self.proc_quit_key = keyboard.Key.end
         argv = [PYTHON, "play_live.py", "--camera-test", "--camera", self.camera.get()]
         if self.invert.get():
             argv.append("--camera-invert")
@@ -283,11 +357,13 @@ class App:
                  "The camera test", "camera_test")
 
     def start_recorder(self):
+        self.proc_quit_key = keyboard.Key.end
         self.run("Recorder loaded -- press Insert in Roblox to start recording.",
                  [("Starting the recorder", [PYTHON, "record_gameplay.py"])], "The recorder",
                  "rec_loading")
 
     def update_model(self):
+        self.proc_quit_key = keyboard.Key.end
         steps = [(f"Tracking the ball in {s.name}", [PYTHON, "track_ball.py", str(s)])
                  for s in sessions_needing_tracking(self.retrack_all.get())]
         if self.retrain_detector.get():
