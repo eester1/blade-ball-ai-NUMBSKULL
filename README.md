@@ -61,7 +61,7 @@ Opens a window with sliders for the white-ball (idle) and red-ball (targeting) H
 python track_ball.py recordings/session_XXXX
 ```
 
-Writes `ball_tracks.jsonl` into that session folder — one line per frame with the detected `ball_x`, `ball_y`, `state` (`"idle"` or `"targeting"`) and `ball_r` (apparent radius in pixels), or `null`s if nothing was found that frame.
+Writes `ball_tracks.jsonl` into that session folder — one line per frame with the detected `ball_x`, `ball_y`, `state` (`"idle"` or `"targeting"`) and `ball_r` (apparent radius in pixels), or `null`s if nothing was found that frame, plus `self_red` (how strongly your character is tinted red, i.e. targeted) for every frame.
 
 Optional visual spot-check:
 
@@ -93,7 +93,7 @@ Labels describe what an action *does* rather than which button did it, so blocki
 python train_model.py dataset.csv -o model.joblib
 ```
 
-- Trains an `MLPClassifier` (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), on the 10 features from `features.py` (see [Model](#model-train_modelpy)).
+- Trains an `MLPClassifier` (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), on the 11 features from `features.py` (see [Model](#model-train_modelpy)).
 - Skips any label with no positive examples yet (e.g. `held_ability` until you've recorded sessions where you pressed Q) — a label that's always 0 can't be learned.
 - Splits each session's data by time (last 20% held out as test set, not a random split — avoids testing on near-duplicate frames the model basically already saw).
 - Oversamples rare rows in the *training* set only: frames with block/ability held (5x), and frames in the fastest 15% of ball speed (3x) — both are underrepresented relative to how much they matter.
@@ -134,9 +134,11 @@ Because a single frame's color/shape signal alone can't reliably tell the real b
 | `white_sat_max`, `white_val_min` | HSV range for the idle (white/grey) ball |
 | `red_hue_low_max`, `red_hue_high_min`, `red_sat_min`, `red_val_min` | HSV range for the targeting (red) ball — red wraps around hue 0, so it's two ranges |
 | `min_area`, `max_area`, `min_circularity` | Shape filter — rejects blobs that are the wrong size or not round enough |
+| `min_fill` | Fraction of a blob's outline actually filled with ball color. The ball is a solid disc (~1.0, and ≥0.9 for ~97% of tracked balls in the recordings); round lettering in red announcement banners ("STANDOFF", "NO ONE WON!") is a hollow ring (~0.75–0.85) and gets rejected |
 | `ui_mask_regions` | Fractional screen regions ignored entirely (HUD panels, stat bar, block/ability icons, a couple of static decorations found to cause false positives) |
 | `max_jump_px_per_frame`, `reset_after_missing_frames`, `confirm_lookahead_frames` | A detection far from the last trusted position isn't rejected outright — it's trusted if the *next* detected frame keeps going near it (real fast movement/bounces continue, a one-off flash doesn't) |
 | `stale_after_frames`, `stale_jitter_px` | If the trusted position hasn't moved at all for this many frames, stop trusting proximity to it and force a fresh whole-frame search — catches long lock-ons onto something static (a decoration, a standing player) that a one-frame check can't |
+| `self_highlight_roi`, `self_highlight_sat_min`, `self_highlight_val_min` | Region around your own character (and its red thresholds) used to detect Blade Ball's red "you're targeted" tint. Adjust the region if your camera zoom puts your character somewhere else on screen |
 
 `track_ball.py` (batch, processing a whole recorded session) and `play_live.py` (real-time) both use this same candidate list + proximity/staleness logic, via shared functions (`find_ball_candidates`, `closest_to`, `most_circular`) — the batch version can additionally peek one frame into the future to confirm a jump, which live inference can't do (it uses a one-frame "pending" delay instead). Each candidate also carries its apparent radius (from contour area), which feeds the depth features below.
 
@@ -154,14 +156,17 @@ Both `build_dataset.py` and `play_live.py` compute features through the same `Fe
 | `ball_radius` | Apparent radius in pixels (smoothed) — bigger means closer |
 | `ball_radius_rate` | How fast the radius is growing, in px/s — positive means approaching |
 | `ball_ttc` | Estimated time to contact in seconds (radius ÷ growth rate, capped at 3 s) |
+| `self_red` | How strongly your own character is tinted red — Blade Ball's "you're targeted" highlight |
 
 Screen position alone can't tell how *close* the ball is — a ball at screen center can be next to you or across the arena. Its apparent size can: it grows as the ball approaches, and radius ÷ growth rate estimates how many seconds until it arrives. That's the cue that says *when* to block, which position and velocity only approximate.
+
+`self_red` answers *whether* the ball is coming for you. The ball's own color (`state_targeting`) turned out to be an unreliable signal for that: in the recordings it was only picked up as red on about half the frames where your character was actually highlighted as the target, while 84% of your blocks happened while highlighted (block rate 9.2% highlighted vs 0.8% not).
 
 Motion history (velocity, radius growth) restarts after gaps longer than 1 second, and live play also restarts it whenever the camera turns — a turning camera sweeps the whole scene across the screen, which would otherwise read as ball velocity.
 
 ## Model (`train_model.py`)
 
-A small multi-label MLP — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees the 10 numeric features above.
+A small multi-label MLP — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees the 11 numeric features above.
 
 **Outputs (independent per-action confidence, each with its own decision threshold in `play_live.py`):** `held_w`, `held_a`, `held_s`, `held_d`, `held_block`, `held_ability` (only labels that have examples in the training data — see step 5).
 
@@ -171,9 +176,11 @@ Features are normalized with a `StandardScaler` fit on the training data (saved 
 
 The model can only react to a ball it can see, so `play_live.py` turns the camera horizontally to keep the ball on screen:
 
-- **Ball visible, inside the middle half of the screen:** the camera doesn't move. This dead zone keeps the ball's on-screen position meaningful to the model, which learned from recordings where the ball moved freely around the screen rather than being pinned to center.
-- **Ball visible, past the dead zone toward the left/right edge:** a short turn toward it, longer the closer it is to the edge.
+- **You're targeted but the ball isn't in view:** turn right away to find it. When the ball targets you, Blade Ball tints your own character red — `track_ball.self_highlight_score` measures that in a fixed region around your character, so it works even when the ball is behind the camera, which is exactly when you'd otherwise die without seeing it.
+- **Ball steadily tracked, inside the middle half of the screen:** the camera doesn't move. This dead zone keeps the ball's on-screen position meaningful to the model, which learned from recordings where the ball moved freely around the screen rather than being pinned to center.
+- **Ball steadily tracked, past the dead zone toward the left/right edge:** a short turn toward it, longer the closer it is to the edge.
 - **Ball lost for ~half a second:** keep turning toward the side it was last seen on, to find it again — for up to 6 seconds, after which it's probably between rounds.
+- **A detection that just jumped to a new spot:** ignored for steering until it's been followed smoothly for 3 frames (`CAMERA_MIN_TRACK_FRAMES`). In live testing, most camera swings away from the real ball started on exactly this kind of detection — a sparkle, a lantern, another player's cosmetic.
 
 Two ways to turn, chosen with `--camera`:
 
@@ -197,5 +204,6 @@ This gives you, for every frame the AI acted on: the detected ball position/velo
 - **Ball detection can still lock onto decoys.** Map decorations (e.g. lit torches), other players' head cosmetics, and similar red/white objects can pass the same color/shape filter as the real ball. Heuristic fixes (proximity tracking, a staleness watchdog, one-frame confirmation) catch most cases but not all — a decoy that's visually stable for a couple of consecutive frames can still slip through. The durable fix would be a small trained classifier scoring candidate crops instead of picking by circularity/proximity alone (data for this is nearly free to generate from existing recordings — every non-selected candidate in an already-tracked frame is an automatic negative example). Not yet built.
 - **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally, and the arrow-key/right-drag methods haven't been verified in Blade Ball yet — run `--camera-test` first.
 - **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do.
-- **Block timing is imprecise.** The model reliably blocks only while the ball is targeting you, but it can't pin down *when* within that window — block precision stays around 0.25 at every threshold. The recordings themselves don't mark the moment of impact tightly: even when the ball is closest, you blocked on only ~1 in 4 frames, so the label is diffuse. Re-tapping (above) makes early blocks cheap rather than fatal. More recordings help; a sharper label (e.g. the frame the ball actually got deflected) would help more.
+- **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
+- **Block timing is imprecise.** The model mostly blocks while you're targeted, but it can only roughly pin down *when* within that window — block precision is around 0.3. The recordings themselves don't mark the moment of impact tightly: even when the ball is closest, you blocked on only ~1 in 4 frames, so the label is diffuse. Re-tapping (above) makes early blocks cheap rather than fatal. More recordings help; a sharper label (e.g. the frame the ball actually got deflected) would help more.
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.

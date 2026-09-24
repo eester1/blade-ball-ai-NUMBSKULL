@@ -62,6 +62,11 @@ DEFAULT_CONFIG = {
     "min_area": 90,
     "max_area": 6000,
     "min_circularity": 0.75,
+    # Fraction of the blob's outline that's actually filled with ball
+    # color. The ball is a solid disc (~1.0); round lettering in red
+    # announcement banners ("STANDOFF", "NO ONE WON!") passes the color and
+    # circularity checks but is a hollow ring (~0.75-0.85).
+    "min_fill": 0.9,
     # Fractional (0-1) screen regions to ignore entirely -- covers the
     # left-side HUD panel (coins/AFK/skills/quests/emote/level icon),
     # the top stats bar, the bottom BLOCK/ABILITY icons, the bottom-left
@@ -100,6 +105,15 @@ DEFAULT_CONFIG = {
     # pick is a fresh whole-frame best-candidate search instead.
     "stale_after_frames": 30,
     "stale_jitter_px": 3,
+    # When the ball targets you, Blade Ball tints your own character red.
+    # The character always sits in about the same place on screen, so this
+    # is readable even when the ball itself is off-screen or behind the
+    # camera -- and it doesn't depend on the ball's own color being picked
+    # up as red. Scored as the fraction of strongly red pixels in this
+    # fractional screen region around the character.
+    "self_highlight_roi": {"x0": 0.44, "y0": 0.43, "x1": 0.56, "y1": 0.60},
+    "self_highlight_sat_min": 120,
+    "self_highlight_val_min": 60,
 }
 
 
@@ -170,6 +184,13 @@ def find_ball_candidates(frame_bgr, cfg):
             circularity = 4 * np.pi * area / (perimeter * perimeter)
             if circularity < cfg["min_circularity"]:
                 continue
+            bx, by, bw, bh = cv2.boundingRect(c)
+            outline = np.zeros((bh, bw), np.uint8)
+            cv2.drawContours(outline, [c], -1, 255, -1, offset=(-bx, -by))
+            inside = cv2.countNonZero(outline)
+            filled = cv2.countNonZero(cv2.bitwise_and(mask[by:by + bh, bx:bx + bw], outline))
+            if inside == 0 or filled / inside < cfg["min_fill"]:
+                continue
             M = cv2.moments(c)
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
@@ -177,6 +198,21 @@ def find_ball_candidates(frame_bgr, cfg):
             candidates.append((circularity, cx, cy, state, radius))
 
     return candidates
+
+
+def self_highlight_score(frame_bgr, cfg):
+    """Fraction (0-1) of strongly red pixels around your own character --
+    high when the ball is targeting you (see self_highlight_roi)."""
+    h, w = frame_bgr.shape[:2]
+    r = cfg["self_highlight_roi"]
+    roi = frame_bgr[int(r["y0"] * h):int(r["y1"] * h), int(r["x0"] * w):int(r["x1"] * w)]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    sat, val = cfg["self_highlight_sat_min"], cfg["self_highlight_val_min"]
+    mask = cv2.bitwise_or(
+        cv2.inRange(hsv, (0, sat, val), (cfg["red_hue_low_max"], 255, 255)),
+        cv2.inRange(hsv, (cfg["red_hue_high_min"], sat, val), (180, 255, 255)),
+    )
+    return float(mask.mean() / 255)
 
 
 def closest_to(candidates, point):
@@ -264,7 +300,11 @@ def run_session(session_dir, cfg, debug, debug_every):
     # holding every frame of a full session in memory at once (thousands of
     # 1920x1080 images) would use several GB, so we re-read from disk later
     # for debug output instead.
-    raw = [find_ball_candidates(cv2.imread(str(fp)), cfg) for fp in frame_paths]
+    raw, self_red = [], []
+    for fp in frame_paths:
+        img = cv2.imread(str(fp))
+        raw.append(find_ball_candidates(img, cfg))
+        self_red.append(self_highlight_score(img, cfg))
 
     # Pass 2: sequentially decide which detection to trust each frame.
     # Whichever candidate is closest to the last trusted position wins, as
@@ -339,6 +379,7 @@ def run_session(session_dir, cfg, debug, debug_every):
             out_file.write(json.dumps({
                 "frame": fp.name, "ball_x": x, "ball_y": y, "state": state,
                 "ball_r": None if radius is None else round(radius, 2),
+                "self_red": round(self_red[i], 4),
             }) + "\n")
 
             if debug and i % debug_every == 0:

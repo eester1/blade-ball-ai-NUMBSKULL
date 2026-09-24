@@ -65,8 +65,9 @@ FPS = 15
 # How confident the model needs to be (0-1) before actually taking each
 # action. Blocking is a bit lower: missing a real block (death) is worse
 # than an unnecessary one, and since blocks are re-tapped (below) an early
-# one no longer costs the chance to block again. 0.4 fires on roughly the
-# same share of targeting frames as you actually blocked in recordings.
+# one no longer costs the chance to block again. On held-out data 0.4 gives
+# the best F1 (0.36) and catches more of your real blocks than 0.5 does
+# (recall 0.40 vs 0.31).
 THRESHOLDS = {
     "held_w": 0.5,
     "held_a": 0.5,
@@ -97,6 +98,14 @@ QUIT_KEY = keyboard.Key.end
 MISSING_FRAMES_RESET = 30
 
 # --- Camera control ---------------------------------------------------------
+# Only steer toward a detection that's been followed smoothly for at least
+# this many consecutive frames. In live testing, most camera swings away
+# from the real ball started on a detection that had just jumped hundreds
+# of pixels -- a decoy -- rather than on a steady track.
+CAMERA_MIN_TRACK_FRAMES = 3
+# Self-highlight score (see track_ball.self_highlight_score) above which
+# your character counts as targeted by the ball.
+SELF_TARGET_THRESHOLD = 0.04
 # Turn toward the ball only once it's past this fraction of the way from
 # screen center to the left/right edge. The dead zone in the middle keeps
 # the ball's on-screen position meaningful to the model (which learned
@@ -228,6 +237,8 @@ class AIController:
         self.missing_since = None
         self.stale_count = 0      # consecutive frames barely-unchanged in position
         self.pending = None       # candidate awaiting next-frame confirmation
+        self.track_len = 0        # consecutive frames the ball was followed smoothly
+        self.self_red = 0.0       # latest self-highlight score (see track_ball)
 
         self.last_tap = {}  # tap action -> time.time() it was last tapped
 
@@ -321,6 +332,7 @@ class AIController:
         stale = self.stale_count >= self.cfg["stale_after_frames"]
         if self.prev_ball is None or stale:
             self.pending = None
+            self.track_len = 0
             return track_ball.most_circular(candidates)[1:]
 
         px, py = self.prev_ball
@@ -328,6 +340,7 @@ class AIController:
         near = [c for c in candidates if ((c[1] - px) ** 2 + (c[2] - py) ** 2) ** 0.5 <= max_dist]
         if near:
             self.pending = None
+            self.track_len += 1
             return track_ball.closest_to(near, (px, py))[1:]
 
         best = track_ball.most_circular(candidates)[1:]
@@ -335,24 +348,37 @@ class AIController:
                 ((best[0] - self.pending[0]) ** 2 + (best[1] - self.pending[1]) ** 2) ** 0.5 \
                 <= self.cfg["max_jump_px_per_frame"]:
             self.pending = None
+            self.track_len = 0
             return best
         self.pending = best
         return None
 
     # --- camera --------------------------------------------------------
 
-    def steer_camera(self, ball_x, width, now):
-        if ball_x is not None:
-            offset = (ball_x - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
+    def steer_camera(self, ball, width, now, targeted):
+        """ball is this frame's (x, y, state, radius) or None; targeted is
+        whether your own character is highlighted as the ball's target."""
+        stable = ball is not None and self.track_len >= CAMERA_MIN_TRACK_FRAMES
+        # You're the target but the ball in view (if any) isn't a steadily
+        # tracked red one -- so the ball that's coming for you is off-screen,
+        # usually behind. Find it now instead of waiting to lose track.
+        if targeted and not (stable and ball[2] == "targeting"):
+            self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now)
+            return
+        if stable:
+            offset = (ball[0] - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
             self.last_seen_side = -1 if offset < 0 else 1
             beyond = abs(offset) - CAMERA_EDGE_ZONE
             if beyond > 0:
                 duration = min(max(beyond * CAMERA_TURN_GAIN_S / (1 - CAMERA_EDGE_ZONE),
                                    CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
                 self.camera.turn(self.last_seen_side, duration, now)
-        elif self.missing_streak >= CAMERA_SEARCH_AFTER_FRAMES and \
+        elif ball is None and self.missing_streak >= CAMERA_SEARCH_AFTER_FRAMES and \
                 now - self.missing_since <= CAMERA_SEARCH_MAX_S:
             self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now)
+        # else: a detection that just jumped here -- often a decoy (a sparkle,
+        # a lantern, another player's cosmetic), so don't swing the camera
+        # toward it until it's held up for a few frames.
 
     # --- per-frame prediction -----------------------------------------
 
@@ -374,14 +400,17 @@ class AIController:
             frame_name = f"{self._log_frame_idx:06d}.jpg"
             cv2.imwrite(str(self._log_frames_dir / frame_name), frame_bgr)
             self._log_frame_idx += 1
-        x, y, state, radius = ball
+        x, y, state, _ = ball if ball is not None else (None, None, None, None)
         entry = {
             "t": t, "frame": frame_name, "ball_x": x, "ball_y": y, "state": state,
-            **row,
-            "proba": {label: float(p) for label, p in zip(self.label_columns, proba)},
+            **(row or {}),
+            "proba": None if proba is None else
+                     {label: float(p) for label, p in zip(self.label_columns, proba)},
             "desired": sorted(desired),
             "tapped": sorted(tapped),
             "camera": self.camera.direction,
+            "track_len": self.track_len,
+            "self_red": round(self.self_red, 4),
         }
         self._log_file.write(json.dumps(entry) + "\n")
         self._log_file.flush()
@@ -407,6 +436,10 @@ class AIController:
                 capture_t = time.time()
                 frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
                 ball = self.select_ball(track_ball.find_ball_candidates(frame_bgr, self.cfg))
+                self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
+                targeted = self.self_red >= SELF_TARGET_THRESHOLD
+                row = proba = None
+                desired = tapped = set()
 
                 if ball is None:
                     if self.missing_streak == 0:
@@ -416,7 +449,7 @@ class AIController:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
-                    self.steer_camera(None, width, capture_t)
+                    self.steer_camera(None, width, capture_t, targeted)
                 else:
                     self.missing_streak = 0
                     x, y, state, radius = ball
@@ -433,14 +466,16 @@ class AIController:
                     # motion history instead of reading it as velocity.
                     if self.camera.last_active >= self.last_feature_t:
                         self.features.reset()
-                    row = self.features.update(x, y, state, radius, capture_t, center_x, center_y)
+                    row = self.features.update(x, y, state, radius, self.self_red,
+                                               capture_t, center_x, center_y)
                     self.last_feature_t = capture_t
 
                     desired, proba = self.predict_actions(row)
                     tapped = self.apply_actions(desired)
-                    self.steer_camera(x, width, capture_t)
-                    if self._log_file is not None:
-                        self.log_frame(capture_t, frame_bgr, ball, row, proba, desired, tapped)
+                    self.steer_camera(ball, width, capture_t, targeted)
+
+                if self._log_file is not None:
+                    self.log_frame(capture_t, frame_bgr, ball, row, proba, desired, tapped)
 
             elapsed = time.time() - start
             time.sleep(max(0.0, interval - elapsed))

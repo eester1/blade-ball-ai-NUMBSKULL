@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report
 
 from build_dataset import LABELS
+from ensemble import SeedEnsemble
 from features import FEATURE_COLUMNS
 
 RARE_LABELS = ["held_block", "held_ability"]
@@ -53,6 +54,8 @@ def main():
     parser.add_argument("-o", "--output", default="model.joblib")
     parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[32, 16],
                          help="Hidden layer sizes, e.g. --hidden-sizes 64 32")
+    parser.add_argument("--seeds", type=int, default=5,
+                         help="Number of differently-initialized models to average")
     args = parser.parse_args()
 
     df = load_dataset(args.dataset)
@@ -110,13 +113,15 @@ def main():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    print(f"\nTraining MLP with hidden layers {args.hidden_sizes} ...")
-    model = MLPClassifier(
-        hidden_layer_sizes=tuple(args.hidden_sizes),
-        max_iter=2000,
-        random_state=0,
-    )
-    model.fit(X_train_scaled, y_train)
+    print(f"\nTraining {args.seeds} MLPs with hidden layers {args.hidden_sizes} ...")
+    model = SeedEnsemble([
+        MLPClassifier(
+            hidden_layer_sizes=tuple(args.hidden_sizes),
+            max_iter=2000,
+            random_state=seed,
+        ).fit(X_train_scaled, y_train)
+        for seed in range(args.seeds)
+    ])
 
     print("\n--- Test set performance (per action) ---")
     y_pred = model.predict(X_test_scaled)

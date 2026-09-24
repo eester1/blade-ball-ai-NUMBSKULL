@@ -11,12 +11,17 @@ and screen velocity, this tracks the ball's radius, how fast the radius
 is growing, and the resulting time-to-contact estimate (radius divided
 by its growth rate -- the classic "looming" cue), which is what actually
 tells you when to block.
+
+Whether the ball is after *you* is read from your own character's red
+"targeted" tint (self_red, see track_ball.self_highlight_score) as well as
+the ball's color: in the recordings the ball was only picked up as red on
+about half the frames where you were actually targeted.
 """
 
 FEATURE_COLUMNS = [
     "ball_rel_x", "ball_rel_y", "ball_vel_x", "ball_vel_y",
     "ball_distance", "ball_closing_speed", "state_targeting",
-    "ball_radius", "ball_radius_rate", "ball_ttc",
+    "ball_radius", "ball_radius_rate", "ball_ttc", "self_red",
 ]
 
 # Below this dt, elapsed time is treated as zero (timestamp glitch) rather
@@ -44,7 +49,7 @@ class FeatureTracker:
         sweeps everything across the screen)."""
         self._prev = None  # (x, y, smoothed_radius, t)
 
-    def update(self, x, y, state, radius, t, center_x, center_y):
+    def update(self, x, y, state, radius, self_red, t, center_x, center_y):
         prev = self._prev
         dt = None if prev is None else t - prev[3]
         fresh = prev is None or dt < MIN_DT or dt > MAX_GAP_S
@@ -76,4 +81,5 @@ class FeatureTracker:
             "ball_radius": r_smooth,
             "ball_radius_rate": r_rate,
             "ball_ttc": ttc,
+            "self_red": self_red,
         }

@@ -77,8 +77,8 @@ def build_rows(session_dir):
         return []
 
     tracks = {t["frame"]: t for t in load_jsonl(tracks_path)}
-    if any(t.get("ball_x") is not None and "ball_r" not in t for t in tracks.values()):
-        print(f"Skipping {session_dir}: ball_tracks.jsonl predates radius tracking "
+    if any("self_red" not in t for t in tracks.values()):
+        print(f"Skipping {session_dir}: ball_tracks.jsonl was made by an older track_ball.py "
               f"(re-run track_ball.py on it).")
         return []
 
@@ -97,7 +97,7 @@ def build_rows(session_dir):
 
         features = tracker.update(
             track["ball_x"], track["ball_y"], track["state"], track["ball_r"],
-            inp["t"], center_x, center_y,
+            track["self_red"], inp["t"], center_x, center_y,
         )
         held = set(inp.get("held", []))
         row = {
