@@ -31,6 +31,22 @@ pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
 
+## The easy way: the control panel
+
+```
+python app.py
+```
+
+Opens a window with buttons for everything below, so you don't need to type commands:
+
+- **Play** — pick the camera method (mouse / keys / off), invert, and whether to save a log; *Start AI* and *Test camera*.
+- **Record your own gameplay** — starts the recorder.
+- **Update the AI from recordings** — tracks the ball in any new recordings, rebuilds the dataset and retrains the model. Tick *Re-track all recordings* after detection changes, and *Also retrain the ball detector* after new recordings.
+- **How did it go?** — score the latest run or all runs (see [Scoring runs](#scoring-runs-score_logspy)), open the logs folder.
+- **Stop** — ends whatever is running by pressing End (the scripts' own safe-quit key, which releases every held key/button), force-closing only if it doesn't respond.
+
+The in-game hotkeys still work while anything runs: **Insert** toggles, **End** quits. The window shows each script's output as it runs. The rest of this README describes the scripts it runs.
+
 ## Full workflow
 
 ### 1. Record gameplay
@@ -146,9 +162,22 @@ Because a single frame's color/shape signal alone can't reliably tell the real b
 | `max_jump_px_per_frame`, `reset_after_missing_frames`, `confirm_lookahead_frames` | A detection far from the last trusted position isn't rejected outright — it's trusted if the *next* detected frame keeps going near it (real fast movement/bounces continue, a one-off flash doesn't) |
 | `stale_after_frames`, `stale_jitter_px` | If the trusted position hasn't moved at all for this many frames, stop trusting proximity to it and force a fresh whole-frame search — catches long lock-ons onto something static (a decoration, a standing player) that a one-frame check can't |
 | `self_target_threshold` | Highlight score above which you count as targeted. While targeted, a red ball on screen is trusted immediately instead of having to match the previous track — while the camera turns to find the ball the whole scene sweeps ~300 px per frame, so otherwise the ball never looks like a continuation of anything and the camera sweeps right past it (this is what happened in live testing) |
+| `min_ball_score` | If `ball_classifier.joblib` exists, candidates the learned ball detector scores below this probability are dropped (see [Learned ball detector](#learned-ball-detector-ball_classifierpy)) |
 | `self_highlight_roi`, `self_highlight_hue_min`, `self_highlight_sat_min`, `self_highlight_val_min` | Region around your own character, and color thresholds, for Blade Ball's red "you're targeted" tint. The region is kept tight so a highlighted player standing next to you mostly falls outside it, and only the slightly pinkish side of red (hue 170–180) counts — orange-red dirt, lava or a pumpkin head near your feet sits on the other side of pure red and caused false alarms. Adjust the region if your camera zoom puts your character somewhere else on screen |
 
 `track_ball.py` (batch, processing a whole recorded session) and `play_live.py` (real-time) both use this same candidate list + proximity/staleness logic, via shared functions (`find_ball_candidates`, `closest_to`, `most_circular`) — the batch version can additionally peek one frame into the future to confirm a jump, which live inference can't do (it uses a one-frame "pending" delay instead). Each candidate also carries its apparent radius (from contour area), which feeds the depth features below.
+
+## Learned ball detector (`ball_classifier.py`)
+
+Color and shape rules keep getting fooled by things that are also round and white/red on some map — sparkles, lanterns, torches, banner letters, players' cosmetics — and each rule above fixes one decoy. `ball_classifier.py` learns what separates the real ball from all of them at once: for every candidate it looks at the color and brightness inside it, how uniform the inside is, how sharp its edge is, and how it contrasts with its surroundings, and outputs the probability it's the ball.
+
+```
+python ball_classifier.py
+```
+
+Trains `ball_classifier.joblib` from the existing recordings with no manual labeling: positives are the ball the tracker followed, but only on frames where it was actually moving (static decoys sit still); negatives are every other candidate in the same frame, well away from the ball. Tested on whole held-out sessions (unseen maps), at the default `min_ball_score` of 0.1 it keeps 98.5% of real balls and rejects 73% of decoys. On hand-checked live frames, real balls scored 0.40–0.995 and decoys (a stray speck, a stuck white object, an explosion's center, a sky patch) 0.02–0.19.
+
+`track_ball.py` and `play_live.py` use it automatically once trained (live costs ~3 ms per frame), and work without it. `python play_live.py model.joblib --no-classifier` turns it off to compare. Retrain it after recording new sessions (the control panel's *Also retrain the ball detector* option).
 
 ## Features (`features.py`)
 
@@ -207,11 +236,29 @@ python play_live.py model.joblib --log
 
 This gives you, for every frame the AI acted on: the detected ball position/velocity/state, the model's confidence for each action, and what it actually pressed — plus the actual frame image in the matching `live_logs/live_<date>_<time>_frames/` folder, so you can visually confirm what was really being tracked at any point. This has already been essential for catching cases where detection locked onto the wrong thing entirely (see below).
 
+### Scoring runs (`score_logs.py`)
+
+```
+python score_logs.py          # newest log in live_logs/
+python score_logs.py --all    # every log, plus a total
+```
+
+Lists every time you were targeted during a run, whether block was tapped, when and how far away the ball was, and how it ended, plus taps made while you weren't targeted. The log can't see "you died" directly (a death ends your red highlight just like a successful block), so results are:
+
+- **survived** — tapped, and you were targeted again soon after, so you were alive
+- **blocked or died** — tapped in time, but no later evidence either way
+- **tapped, unclear** — tapped, but the highlight stayed on long after (possibly too early)
+- **no tap** — targeted but never blocked; most deaths look like this
+
+Use it to compare before/after a change instead of judging from one memorable match. Anything but *survived* is worth a look in the saved frames.
+
 ## Known Limitations
 
-- **Ball detection can still lock onto decoys.** Map decorations (e.g. lit torches), other players' head cosmetics, and similar red/white objects can pass the same color/shape filter as the real ball. Heuristic fixes (proximity tracking, a staleness watchdog, one-frame confirmation) catch most cases but not all — a decoy that's visually stable for a couple of consecutive frames can still slip through. The durable fix would be a small trained classifier scoring candidate crops instead of picking by circularity/proximity alone (data for this is nearly free to generate from existing recordings — every non-selected candidate in an already-tracked frame is an automatic negative example). Not yet built.
-- **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally, and the arrow-key/right-drag methods haven't been verified in Blade Ball yet — run `--camera-test` first.
+- **Ball detection can still lock onto decoys.** Map decorations, other players' cosmetics, glow near your own character, and similar red/white objects can pass the same color/shape filter as the real ball. The learned ball detector plus the tracking rules catch most cases, but the detector is only as good as its training labels, which come from the rule-based tracker itself (no hand-labeled data) — so it learns the tracker's habits along with the ball's look. Hand-labeling a few hundred tricky frames would make it sharper.
+- **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally.
+- **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball.
 - **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do.
 - **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
-- **Block timing is imprecise.** The model mostly blocks while you're targeted, but it can only roughly pin down *when* within that window — block precision is around 0.3. The recordings themselves don't mark the moment of impact tightly: even when the ball is closest, you blocked on only ~1 in 4 frames, so the label is diffuse. Re-tapping (above) makes early blocks cheap rather than fatal. More recordings help; a sharper label (e.g. the frame the ball actually got deflected) would help more.
+- **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from a handful of live runs; odd approach angles or map lighting may need further tuning — `score_logs.py` shows the ball's distance and size at every tap.
+- **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold.
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play.

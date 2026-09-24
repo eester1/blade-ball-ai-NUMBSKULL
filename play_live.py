@@ -55,6 +55,7 @@ import mss
 import numpy as np
 from pynput import keyboard, mouse
 
+import ball_classifier
 import track_ball
 from features import FeatureTracker
 
@@ -114,9 +115,10 @@ BLOCK_BIG_RADIUS = 45
 BLOCK_BIG_MAX_CHAR_DIST = 320
 
 # Your character's red "targeted" tint can blink off while the ball is
-# still coming -- e.g. during your own block animation. For this long after
-# last seeing it, keep counting as targeted while the tracked ball is still
-# red, instead of the model suddenly deciding the danger has passed.
+# still coming. For this long after last seeing it, keep counting as
+# targeted while the tracked ball is still red, instead of the model
+# suddenly deciding the danger has passed -- but not once a block has been
+# tapped since (then the tint going away most likely means it worked).
 TARGET_LATCH_S = 1.5
 
 TOGGLE_KEY = keyboard.Key.insert
@@ -260,7 +262,8 @@ class Camera:
 
 
 class AIController:
-    def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None):
+    def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None,
+                 use_classifier=True):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
@@ -275,6 +278,8 @@ class AIController:
                              f"  python train_model.py dataset.csv -o model.joblib")
 
         self.cfg = track_ball.load_config()
+        # Learned "is this blob really the ball?" filter, if it's been trained.
+        self.scorer = ball_classifier.load_scorer() if use_classifier else None
         self.kb = keyboard.Controller()
         self.ms = mouse.Controller()
         self.camera = Camera(camera_method, camera_invert, self.kb, self.ms)
@@ -516,11 +521,19 @@ class AIController:
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
                 if self.self_red >= self.cfg["self_target_threshold"]:
                     self.targeted_at = (capture_t, self.self_red)
-                ball = self.select_ball(*track_ball.find_ball_candidates(frame_bgr, self.cfg))
+                candidates, cores = track_ball.find_ball_candidates(frame_bgr, self.cfg)
+                if self.scorer is not None:
+                    candidates, cores = self.scorer.filter(
+                        frame_bgr, candidates, cores, self.cfg["min_ball_score"])
+                ball = self.select_ball(candidates, cores)
+                # Tint blinked off but the ball is still coming -- unless a block
+                # was already tapped since, in which case it most likely worked
+                # and whatever red thing is nearby isn't coming for you.
                 if self.self_red < self.cfg["self_target_threshold"] and self.targeted_at \
                         and capture_t - self.targeted_at[0] <= TARGET_LATCH_S \
+                        and self.last_tap.get("block", 0) < self.targeted_at[0] \
                         and ball is not None and ball[2] == "targeting":
-                    self.self_red = self.targeted_at[1]  # tint blinked off; ball still coming
+                    self.self_red = self.targeted_at[1]
                 targeted = self.self_red >= self.cfg["self_target_threshold"]
                 row = proba = None
                 desired = tapped = set()
@@ -593,6 +606,9 @@ def main():
                         help="Flip the camera turn direction")
     parser.add_argument("--camera-test", action="store_true",
                         help="Turn the camera left then right to check the setup, then exit")
+    parser.add_argument("--no-classifier", action="store_true",
+                        help="Don't use ball_classifier.joblib to filter out decoys "
+                             "(to compare against it)")
     parser.add_argument("--log", nargs="?", const="auto",
                         help="Write a JSONL diagnostic log (features, predicted confidences, "
                              "camera) for every live-inferred frame while AI is enabled, and "
@@ -611,7 +627,10 @@ def main():
     if not args.model:
         parser.error("Provide model.joblib (or use --camera-test).")
 
-    controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log)
+    controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
+                              use_classifier=not args.no_classifier)
+    print("Ball classifier: " + ("on" if controller.scorer else
+                                 "off" if args.no_classifier else "not trained yet (off)"))
     if args.log:
         print(f"Logging live diagnostics to {args.log} (frames in {controller._log_frames_dir})")
 

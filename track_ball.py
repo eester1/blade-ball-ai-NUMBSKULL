@@ -88,6 +88,15 @@ DEFAULT_CONFIG = {
     # announcement banners ("STANDOFF", "NO ONE WON!") passes the color and
     # circularity checks but is a hollow ring (~0.75-0.85).
     "min_fill": 0.9,
+    # If ball_classifier.joblib exists (see ball_classifier.py), candidates it
+    # scores below this probability of being the ball are dropped. Kept low
+    # on purpose: losing the real ball for even one frame can break a track
+    # (a motion-blurred real ball scored 0.156 and dropping it cost a block
+    # in replay), while a decoy that slips past still has to get through
+    # the tracker's other rules. At 0.1 it keeps 98.5% of real balls on
+    # unseen sessions and rejects 73% of decoys, including a stuck white
+    # object (0.075) and a stray speck (0.02) that had steered the camera.
+    "min_ball_score": 0.1,
     # A fast ball's glowing trail is pale enough to pass the color filter
     # and merges with the ball into one long blob that fails the round-shape
     # check. For such blobs, the largest solid circle that fits inside is
@@ -487,10 +496,15 @@ def run_session(session_dir, cfg, debug, debug_every):
     # holding every frame of a full session in memory at once (thousands of
     # 1920x1080 images) would use several GB, so we re-read from disk later
     # for debug output instead.
+    import ball_classifier  # imports this module, so not at the top
+    scorer = ball_classifier.load_scorer()
     raw, self_red = [], []
     for fp in frame_paths:
         img = cv2.imread(str(fp))
-        raw.append(find_ball_candidates(img, cfg))
+        candidates, cores = find_ball_candidates(img, cfg)
+        if scorer is not None:
+            candidates, cores = scorer.filter(img, candidates, cores, cfg["min_ball_score"])
+        raw.append((candidates, cores))
         self_red.append(self_highlight_score(img, cfg))
 
     # Pass 2: sequentially decide which detection to trust each frame.
