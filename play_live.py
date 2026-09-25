@@ -120,6 +120,15 @@ TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 # normal targetings), so timing alone couldn't fix them.
 SPAM_EXCHANGE_GAP_S = 1.2
 SPAM_TAP_S = 0.1
+# ...and keep spamming between hits: in a really fast exchange your
+# "targeted" tint shows only ~0.1s before the ball is back (two of three
+# deaths in the first spam runs), too late to start then. So for up to
+# SPAM_EXCHANGE_GAP_S after a targeting ends, spam on while the ball stays
+# within SPAM_NEAR_3D ball radii (3D) of you -- the close back-and-forth.
+SPAM_NEAR_3D = 40
+# The ball is often too fast to see mid-exchange; keep spamming this long
+# after it was last seen that close.
+SPAM_UNSEEN_S = 0.4
 
 # Hold block while the ball hovers (--hold-hover, off by default): while a
 # red ball coming at you is barely growing on screen and barely closing in,
@@ -181,6 +190,16 @@ BLOCK_MAX_GROWTH_LEAD = 0.5
 # bottom of the screen, well away from your character (a death: radius 97,
 # 408px away, never blocked).
 BLOCK_HUGE_RADIUS = 70
+# The ball glows red when it's coming for *you*, and sometimes your
+# "targeted" tint doesn't show at all (a dark map: 0.00 while a red ball
+# flew straight in and killed). So a red ball that's closed in by at least
+# INCOMING_CLOSED 3D ball radii over the last INCOMING_WINDOW_S, and is
+# within INCOMING_3D, also counts as targeting you -- for blocking only. In
+# the logs, of 30 such moments without the tint, 25 were real targetings
+# (tint just early/late), 3 were deaths with no tint, 2 possible false alarms.
+INCOMING_3D = 22
+INCOMING_CLOSED = 10
+INCOMING_WINDOW_S = 0.3
 # Screen distance from your character is a poor measure of "close" when the
 # ball comes from in front of you, from above or near the camera: it can be
 # on you while still 200-500px away on screen (two deaths, never blocked in
@@ -585,6 +604,8 @@ class AIController:
         self.was_targeted = False
         self.targeted_until = -1e9    # when you were last targeted
         self.fast_exchange = False    # this targeting came right after the last one
+        self.spam_near_t = -1e9       # when the ball was last seen close mid-exchange
+        self.red_hist = []            # (t, 3D distance) of recent red detections (see incoming)
         self.new_round = True      # the next "playing" is a new round (not a return from alt-tab)
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
@@ -658,14 +679,34 @@ class AIController:
             self.targeted_until = t
         self.was_targeted = targeted
 
-    def spamming(self, targeted):
-        return self.spam_block and targeted and self.fast_exchange
+    def spamming(self, targeted, ball=None, t=0.0, character_xy=None, screen_h=1080):
+        """--spam-block: in a fast exchange while targeted, and between hits
+        while the ball stays close (see SPAM_*)."""
+        if not self.spam_block:
+            return False
+        if targeted:
+            return self.fast_exchange
+        if t - self.targeted_until >= SPAM_EXCHANGE_GAP_S:
+            return False
+        if ball is not None and character_xy is not None and                 ball_distance_3d(ball[0], ball[1], ball[3], character_xy, screen_h) <= SPAM_NEAR_3D:
+            self.spam_near_t = t
+            return True
+        return ball is None and t - self.spam_near_t < SPAM_UNSEEN_S
 
     def hovering(self, ball, targeted, t):
         """--hold-hover: a red ball coming at you that's barely moving in."""
         return (self.hold_hover and targeted and ball[2] == "targeting"
                 and ball[3] < BLOCK_HUGE_RADIUS and t - self.motion_t <= HOVER_MOTION_FRESH_S
                 and self.growth < HOVER_MAX_GROWTH and self.approach < HOVER_MAX_APPROACH)
+
+    def incoming(self, ball, t, character_xy, screen_h):
+        """A red ball closing in on you fast (see INCOMING_*)."""
+        if ball[2] != "targeting":
+            self.red_hist = []
+            return False
+        d3 = ball_distance_3d(ball[0], ball[1], ball[3], character_xy, screen_h)
+        self.red_hist = [h for h in self.red_hist if t - h[0] <= INCOMING_WINDOW_S] + [(t, d3)]
+        return d3 <= INCOMING_3D and len(self.red_hist) >= 3 and             self.red_hist[0][1] - d3 >= INCOMING_CLOSED
 
     def reset_tracking(self):
         """Forget the ball -- after a pause or between rounds it's stale."""
@@ -1058,7 +1099,7 @@ class AIController:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
-                    if self.spamming(targeted):
+                    if self.spamming(targeted, None, capture_t):
                         # In a fast exchange the ball is often too quick to see.
                         tapped = self.apply_actions({"block"}, tap_every=SPAM_TAP_S)
                     self.steer_camera(None, width, capture_t, targeted)
@@ -1087,8 +1128,12 @@ class AIController:
                     else:
                         row, desired, proba = self.last_model  # see MODEL_INTERVAL_S
                     self.measure_motion(ball, capture_t, character_xy, targeted)
+                    # A red ball closing in counts as targeting you even without
+                    # the tint (see INCOMING_*) -- for blocking.
+                    if not targeted and self.incoming(ball, capture_t, character_xy, height):
+                        targeted = True
 
-                    spam = self.spamming(targeted)
+                    spam = self.spamming(targeted, ball, capture_t, character_xy, height)
                     if spam:
                         desired = desired | {"block"}
                     elif self.hovering(ball, targeted, capture_t):
