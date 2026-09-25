@@ -13,6 +13,8 @@
 - **Scores confirm deaths** — logs record when the AI went to the lobby, so being sent there right after you were targeted is reported as **died/round over** instead of a guess.
 - New banners for the new states: waiting in the lobby, and waiting for the Roblox window.
 
+- **30 looks per second instead of 15** — screen capture now uses `dxcam` when it's installed (about 1 ms instead of about 33 ms), so the AI runs at 30 fps: measured 29.8 fps with all detection. Ball tracking, block timing and the camera use every frame. The model still sees the ball 15 times a second, like the recordings it learned from. Settings that count frames were doubled to mean the same time, and logs still save 15 screenshots a second, so they don't get bigger. Falls back to `mss` at the old speed without dxcam.
+
 ### Docs
 
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.

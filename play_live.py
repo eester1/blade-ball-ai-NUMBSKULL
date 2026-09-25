@@ -65,10 +65,23 @@ import game_state
 import track_ball
 from features import FeatureTracker
 
-# Target capture rate -- caps how often the screen is polled. Velocity is
-# measured in pixels/second from real timestamps, so this doesn't have to
-# match the recording FPS exactly.
-FPS = 15
+# How often the screen is looked at. At 15 a fast late-round ball moved
+# 100-180px between looks, so blocks landed a frame late. With dxcam capture
+# (~1 ms instead of ~33 ms with mss) a frame costs ~25 ms, so 30 fits.
+FPS = 30
+# The recordings the model learned from were made at 15 fps, and its
+# features (velocity, radius growth) are smoothed and differenced per
+# sample -- so the model still sees the ball at that rate, and its last
+# decision is reused in between. Tracking, block timing and the camera run
+# at the full FPS.
+RECORDING_FPS = 15
+MODEL_INTERVAL_S = 1.0 / RECORDING_FPS - 0.005
+# Settings below that count frames were tuned at 15 fps; this keeps them
+# meaning the same amount of time.
+FRAME_SCALE = FPS // RECORDING_FPS
+# With --log, save a screenshot on every Nth frame only (15 a second), so
+# logs don't double in size.
+LOG_FRAME_EVERY = FRAME_SCALE
 
 # How confident the model needs to be (0-1) before actually taking each
 # action. Blocking is a bit lower: missing a real block (death) is worse
@@ -154,12 +167,12 @@ DEFAULT_QUIT_KEY = "end"
 # waiting), and it only switches after this many checks in a row agree --
 # so one odd frame (a menu flicker, a flash over the button) can't pause
 # or start it.
-LOBBY_CHECK_EVERY = 3
+LOBBY_CHECK_EVERY = 3 * FRAME_SCALE
 LOBBY_CONFIRM_CHECKS = 2
-ROUND_CONFIRM_CHECKS = 3
+ROUND_CONFIRM_CHECKS = 3 * FRAME_SCALE
 # Auto vote: while in the lobby, look for the chosen gamemode's vote button
 # this often (frames), and click it once per visit to the lobby.
-VOTE_CHECK_EVERY = 8
+VOTE_CHECK_EVERY = 8 * FRAME_SCALE
 # While logging, save a lobby frame this often (seconds), so what the lobby
 # looked like (vote screen included) can be checked afterwards.
 LOBBY_FRAME_EVERY_S = 1.0
@@ -195,14 +208,14 @@ def roblox_focused():
 
 # If the ball goes undetected for this many consecutive frames, release
 # every held action as a safety net (probably out of a round, or lost).
-MISSING_FRAMES_RESET = 30
+MISSING_FRAMES_RESET = 30 * FRAME_SCALE
 
 # --- Camera control ---------------------------------------------------------
 # Only steer toward a detection that's been followed smoothly for at least
 # this many consecutive frames. In live testing, most camera swings away
 # from the real ball started on a detection that had just jumped hundreds
 # of pixels -- a decoy -- rather than on a steady track.
-CAMERA_MIN_TRACK_FRAMES = 3
+CAMERA_MIN_TRACK_FRAMES = 3 * FRAME_SCALE
 # Turn toward the ball only once it's past this fraction of the way from
 # screen center to the left/right edge. The dead zone in the middle keeps
 # the ball's on-screen position meaningful to the model (which learned
@@ -220,16 +233,19 @@ CAMERA_SETTLE_S = 0.07
 # How long a ball's measured motion is still trusted while the camera turns
 # and it can't be measured afresh.
 MOTION_HOLD_S = 0.3
+# Ball speed and growth are measured over at least this long (about one
+# 15 fps frame) -- over a 30 fps frame the pixel jitter would double them.
+MOTION_MIN_DT = 0.06
 # Turn duration per unit of distance past the edge zone, and its bounds.
 CAMERA_TURN_GAIN_S = 0.3
 CAMERA_MIN_TURN_S = 0.04
 CAMERA_MAX_TURN_S = 0.15
 # Once the ball has been missing this many frames, sweep toward the side
 # it was last seen on to find it again...
-CAMERA_SEARCH_AFTER_FRAMES = 8
+CAMERA_SEARCH_AFTER_FRAMES = 8 * FRAME_SCALE
 # ...or after only this many if it was heading off the side of the screen
 # when last seen: then it's surely out of view, not just missed a frame.
-CAMERA_SEARCH_AFTER_EXIT_FRAMES = 2
+CAMERA_SEARCH_AFTER_EXIT_FRAMES = 2 * FRAME_SCALE
 CAMERA_EXIT_OFFSET = 0.7
 CAMERA_SEARCH_TURN_S = 0.12
 # Mouse mode: sweep this much faster than normal turns while searching --
@@ -300,6 +316,38 @@ def move_mouse_relative(dx, dy):
         raise RuntimeError("--camera mouse needs Windows (SendInput)")
     inp = _INPUT(type=0, mi=_MOUSEINPUT(dx, dy, 0, 0x0001, 0, 0))  # MOUSEEVENTF_MOVE
     ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
+class Screen:
+    """Grabs the primary monitor as a BGR image. Uses dxcam (Windows Desktop
+    Duplication: ~1 ms a frame) when it's installed and works, else mss
+    (~33 ms a frame, which alone takes half of a 30 fps frame)."""
+
+    def __init__(self, region):
+        self.region = region
+        self.method = "mss"
+        self._cam = None
+        try:
+            import dxcam
+            cam = dxcam.create(output_color="BGR")
+            if cam is not None and (cam.width, cam.height) == (region["width"], region["height"]):
+                cam.start(target_fps=60, video_mode=True)
+                self._cam, self.method = cam, "dxcam"
+        except Exception:  # not installed, or no Desktop Duplication here
+            self._cam = None
+        if self._cam is None:
+            self._sct = mss.mss()
+
+    def grab(self):
+        if self._cam is not None:
+            # A copy: dxcam keeps writing into its own buffer while we work.
+            return self._cam.get_latest_frame().copy()
+        return cv2.cvtColor(np.array(self._sct.grab(self.region)), cv2.COLOR_BGRA2BGR)
+
+    def close(self):
+        if self._cam is not None:
+            self._cam.stop()
+            self._cam = None
 
 
 class Camera:
@@ -396,6 +444,9 @@ class AIController:
                              f"  python train_model.py dataset.csv -o model.joblib")
 
         self.cfg = track_ball.load_config()
+        # Counted in frames, tuned at 15 fps (see FRAME_SCALE).
+        for key in ("stale_after_frames", "size_continuity_frames"):
+            self.cfg[key] *= FRAME_SCALE
         # Learned "is this blob really the ball?" filter, if it's been trained.
         self.scorer = ball_classifier.load_scorer() if use_classifier else None
         self.kb = keyboard.Controller()
@@ -421,6 +472,9 @@ class AIController:
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
         self.frame_count = 0
+        self.screen = None         # Screen, made when run() starts
+        self.last_model = None     # (row, desired, proba) of the last model run
+        self.last_model_t = 0.0
         self.quit = False
         self._lock = threading.Lock()
 
@@ -494,6 +548,7 @@ class AIController:
         self.searching = False
         self.last_offset = 0.0
         self.features.reset()
+        self.last_model = None
 
     def set_phase(self, phase, t):
         """Switch between playing / waiting in the lobby / waiting for the
@@ -660,6 +715,8 @@ class AIController:
         x, y, state, radius = ball
         distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
         prev = self.prev_motion
+        if prev is not None and 0 < t - prev[0] < MOTION_MIN_DT and self.track_len >= 1:
+            return  # too soon to measure well -- keep the last values
         recent = prev is not None and 0 < t - prev[0] <= 0.2
         continued = recent and self.track_len >= 1
         incoming = recent and targeted and state == prev[3] == "targeting"
@@ -748,7 +805,7 @@ class AIController:
 
     def log_frame(self, t, frame_bgr, ball, row, proba, desired, tapped):
         frame_name = None
-        if self._log_frames_dir is not None:
+        if self._log_frames_dir is not None and self.frame_count % LOG_FRAME_EVERY == 0:
             frame_name = f"{self._log_frame_idx:06d}.jpg"
             cv2.imwrite(str(self._log_frames_dir / frame_name), frame_bgr)
             self._log_frame_idx += 1
@@ -775,6 +832,9 @@ class AIController:
     def run(self):
         interval = 1.0 / FPS
         region = self._sct.monitors[1]
+        if self.screen is None:
+            self.screen = Screen(region)
+        print(f"Screen capture: {self.screen.method}, {FPS} fps")
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
         self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
@@ -800,7 +860,7 @@ class AIController:
                 self.frame_count += 1
                 self.camera.update(start)
                 capture_t = time.time()
-                frame_bgr = cv2.cvtColor(np.array(self._sct.grab(region)), cv2.COLOR_BGRA2BGR)
+                frame_bgr = self.screen.grab()
                 if self.lobby is not None:
                     if self.phase == "no_focus":
                         self.phase = None  # back in Roblox: work out where we are
@@ -833,6 +893,7 @@ class AIController:
                 desired = tapped = set()
 
                 if ball is None:
+                    self.last_model = None  # start fresh when it's seen again
                     self.missing_streak += 1
                     if self.missing_streak >= MISSING_FRAMES_RESET:
                         self.release_all()
@@ -853,14 +914,18 @@ class AIController:
                     # A turning camera sweeps the whole scene across the
                     # screen -- that motion isn't the ball's, so restart
                     # motion history instead of reading it as velocity.
-                    if self.camera.last_active >= self.last_feature_t:
-                        self.features.reset()
-                    row = self.features.update(x, y, state, radius, self.self_red,
-                                               capture_t, center_x, center_y)
-                    self.last_feature_t = capture_t
+                    if self.last_model is None or capture_t - self.last_model_t >= MODEL_INTERVAL_S:
+                        if self.camera.last_active >= self.last_feature_t:
+                            self.features.reset()
+                        row = self.features.update(x, y, state, radius, self.self_red,
+                                                   capture_t, center_x, center_y)
+                        self.last_feature_t = capture_t
+                        desired, proba = self.predict_actions(row)
+                        self.last_model, self.last_model_t = (row, desired, proba), capture_t
+                    else:
+                        row, desired, proba = self.last_model  # see MODEL_INTERVAL_S
                     self.measure_motion(ball, capture_t, character_xy, targeted)
 
-                    desired, proba = self.predict_actions(row)
                     if should_block("block" in desired, ball, targeted, character_xy,
                                     self.approach, self.growth):
                         desired = desired | {"block"}
@@ -949,6 +1014,8 @@ def main():
             listener.join()
     finally:
         controller.release_all()  # belt-and-suspenders: never leave keys stuck
+        if controller.screen is not None:
+            controller.screen.close()
         if controller._log_file is not None:
             controller._log_file.close()
         print("Exited, all keys/buttons released.")

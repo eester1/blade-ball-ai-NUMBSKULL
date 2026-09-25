@@ -42,8 +42,10 @@ logger while you play       state and size             dataset.csv           MLP
 ## Setup
 
 ```
-pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow
+pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow dxcam
 ```
+
+`dxcam` is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **30 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with 30 a second. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 30 fps`).
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
 
