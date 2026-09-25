@@ -106,15 +106,22 @@ class VoteButton:
         template = cv2.imread(str(vote_template_path(mode)), cv2.IMREAD_GRAYSCALE)
         if template is None:
             raise FileNotFoundError(f"missing {vote_template_path(mode)}")
-        self._template = template
+        # The button looks different once the mouse is over it (and after
+        # you've voted, the cursor stays there): bright yellow and a little
+        # bigger, which the normal picture doesn't match -- so the vote went
+        # through but couldn't be confirmed. Other looks sit next to it as
+        # vote_<mode>_<look>.png (e.g. vote_classic_selected.png).
+        self._pictures = [template] + [
+            cv2.imread(str(extra), cv2.IMREAD_GRAYSCALE)
+            for extra in sorted(vote_template_path(mode).parent.glob(f"vote_{mode}_*.png"))]
         self._templates = {}  # frame height -> scaled templates
 
     def _templates_for(self, frame_h):
         if frame_h not in self._templates:
             base = frame_h / 1080
             self._templates[frame_h] = [
-                cv2.resize(self._template, None, fx=base * s, fy=base * s,
-                           interpolation=cv2.INTER_AREA) for s in VOTE_SIZES]
+                cv2.resize(picture, None, fx=base * s, fy=base * s, interpolation=cv2.INTER_AREA)
+                for picture in self._pictures for s in VOTE_SIZES]
         return self._templates[frame_h]
 
     def find(self, frame_bgr):

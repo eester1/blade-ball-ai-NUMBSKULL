@@ -555,6 +555,8 @@ class AIController:
         self.vote_next_t = 0.0       # earliest time for the next click / check
         self.last_lobby_frame_t = 0.0
         self.phase = None          # "playing", "lobby", "no_focus" or None (not yet known)
+        self.rounds_played = 0     # Auto: rounds started this run (see set_phase)
+        self.new_round = True      # the next "playing" is a new round (not a return from alt-tab)
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
         self.frame_count = 0
@@ -650,6 +652,15 @@ class AIController:
         print("[AI playing]" if phase == "playing" and self.lobby is None
               else PHASE_MESSAGES[phase])
         self.log_event(t, phase)
+        # Count rounds: playing after the lobby (or at the start) is a new
+        # one; coming back after clicking out of Roblox isn't.
+        if self.lobby is not None:
+            if phase == "lobby":
+                self.new_round = True
+            elif phase == "playing" and self.new_round:
+                self.new_round = False
+                self.rounds_played += 1
+                print(f"[round {self.rounds_played} started]")
 
     def check_round(self, frame_bgr, t):
         """Auto mode: pause in the lobby, play when a round starts."""

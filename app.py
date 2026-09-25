@@ -141,6 +141,16 @@ class App:
         self.banner.pack(fill="x", **pad)
         self.set_banner("idle")
 
+        # --- Round counter, like a macro tool's repeat count ----------------
+        # Counts rounds Auto started playing: this run, and all time (kept in
+        # panel_settings.json).
+        self.rounds_run = 0
+        self.rounds_total = saved.get("rounds_total", 0)
+        self.rounds_text = tk.StringVar()
+        tk.Label(main, textvariable=self.rounds_text, font=("Segoe UI", 12, "bold"),
+                 fg="#1e4d12").pack(fill="x", padx=8)
+        self.update_rounds()
+
         # --- Play -------------------------------------------------------
         play = ttk.LabelFrame(main, text="Play", padding=8)
         play.pack(fill="x", **pad)
@@ -281,6 +291,11 @@ class App:
                     self.hint.set("")
                     self.set_banner("idle")
                 else:
+                    if item.startswith("[round ") and "started]" in item:
+                        self.rounds_run += 1
+                        self.rounds_total += 1
+                        self.update_rounds()
+                        self.save_settings()
                     for trigger, banner in BANNER_TRIGGERS:
                         if trigger in item:
                             self.set_banner(banner)
@@ -303,11 +318,16 @@ class App:
         else:
             self.play_hint.set(f"In Roblox: Insert = AI on/off, {key} = stop.")
 
+    def update_rounds(self):
+        self.rounds_text.set(f"Rounds played:  {self.rounds_run} this run   |   "
+                             f"{self.rounds_total} all time")
+
     def save_settings(self):
         try:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
-                "stop_key": self.stop_key.get(), "learned_block": self.learned_block.get()},
+                "stop_key": self.stop_key.get(), "learned_block": self.learned_block.get(),
+                "rounds_total": self.rounds_total},
                 indent=2))
         except OSError:
             pass  # not worth failing a start over
@@ -345,6 +365,8 @@ class App:
     # --- button actions -----------------------------------------------------
 
     def start_ai(self):
+        self.rounds_run = 0
+        self.update_rounds()
         if not (HERE / "model.joblib").exists():
             self.status.set("No model.joblib yet -- record some gameplay, then Update model.")
             return
