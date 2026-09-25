@@ -304,6 +304,25 @@ CAMERA_MOUSE_SPEED = 900
 CAMERA_REANCHOR_PX = 250
 
 
+LEARNED_BLOCK_PATH = Path(__file__).resolve().parent / "learned_block.json"
+
+
+def use_learned_block_timing():
+    """--learned-block: take BLOCK_3D_DIST from learned_block.json -- the tap
+    distance learn_block.py found works best in your own logged runs. The
+    built-in value stays if nothing has been learned yet."""
+    global BLOCK_3D_DIST
+    try:
+        learned = json.loads(LEARNED_BLOCK_PATH.read_text())
+    except (OSError, ValueError):
+        print(f"Learned block timing: none yet -- press 'Learn from my runs' (learn_block.py). "
+              f"Using the built-in {BLOCK_3D_DIST}.")
+        return
+    BLOCK_3D_DIST = learned["block_3d_dist"]
+    print(f"Learned block timing: taps within {BLOCK_3D_DIST} ball radii (3D), learned "
+          f"{learned['learned_at']} from {learned['targetings']} targetings.")
+
+
 def ball_distance_3d(x, y, radius, character_xy, screen_h):
     """The ball's distance from your character in 3D, in ball radii, from its
     screen position and apparent size (a perspective camera: size shrinks in
@@ -1055,6 +1074,10 @@ def main():
                              "Insert toggles)")
     parser.add_argument("--vote", choices=["none", *game_state.VOTE_MODES], default="none",
                         help="With --auto: vote for this gamemode each time in the lobby")
+    parser.add_argument("--learned-block", action="store_true",
+                        help="Use the block timing learned from your own logged runs "
+                             "(learned_block.json, made by learn_block.py) instead of the "
+                             "built-in BLOCK_3D_DIST")
     parser.add_argument("--quit-key", default=DEFAULT_QUIT_KEY,
                         help="Key that quits the AI (default: end). E.g. home, delete, "
                              "page_down, f8")
@@ -1073,6 +1096,9 @@ def main():
         return
     if not args.model:
         parser.error("Provide model.joblib (or use --camera-test).")
+
+    if args.learned_block:
+        use_learned_block_timing()
 
     controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
                               use_classifier=not args.no_classifier, auto=args.auto,

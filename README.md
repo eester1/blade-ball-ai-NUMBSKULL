@@ -151,7 +151,7 @@ This opens a window with a button for everything, so you never have to type the 
 - **Update the AI from recordings** — **Update model** teaches the AI from everything in `recordings/` (see below). The options:
   - **Re-track all recordings** — tracks the ball again in every recording, not just new ones. Slow; only needed after the ball detection code changes.
   - **Also retrain the ball detector** — retrains the learned ball detector too. Slow; worth doing after recording new sessions, especially on new maps.
-- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)) and **Open logs folder**. These work at any time, even while the AI is playing.
+- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)), **Open logs folder**, and **Learn from my runs** (see [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games)). These work at any time, even while the AI is playing.
 - **Stop** — ends whatever is running, safely: it presses the script's own quit key (your stop key for the AI, End for the others), which lets go of every held key and button, and only force-closes the script if it doesn't respond.
 - **Output box** — everything the running script prints.
 
@@ -428,6 +428,28 @@ Between rounds, while the "Game Starting in N Seconds" countdown runs, Blade Bal
 It recognises the button from a picture of its label, `assets/vote_classic.png`, searching the top-middle part of the screen where the panel appears. It matches in greyscale at full size, which takes about 12 ms, and only while it's in the lobby. On every saved frame so far, frames showing the vote panel scored at least 0.995 and all others at most 0.37 (the cut-off is 0.8), whichever modes were offered alongside Classic.
 
 If Blade Ball restyles the vote panel, take a screenshot of it, crop the "Classic" label out of the button at full size, and save it over `assets/vote_classic.png`. While Auto waits in the lobby with **Save a log of this run** on, it also saves one screenshot per second into the run's `_frames` folder, which is handy for this.
+
+## Learned block timing (learning from the AI's own games)
+
+The built-in block rules were tuned by hand. This lets the AI learn **when to block from its own results** instead: which blocks actually saved it, and which didn't. It doesn't copy you; it learns from outcomes, so it can end up better than any recording.
+
+**How it works:** every logged Auto run records, for each time you were targeted, what the ball looked like when the AI tapped block, and whether you survived or died. `learn_block.py` takes the tap that mattered in each targeting (the last one before the ball arrived) and looks at how survival depends on the ball's **3D distance** from you at that moment. The first time it ran (203 targetings), the pattern was clear:
+
+| 3D distance at the tap (ball radii) | Survived |
+|---|---|
+| under 22 (where the built-in rule taps) | 66–74% |
+| 22–33 | 87% |
+| 33–60 | 91–93% |
+
+Blocking while the ball is still a bit farther out works much better, and the far taps weren't just easier, slower balls. It picks the **closest** tap distance where taps just inside it survive at least 90% of the time: **39** the first time, versus 22 built in. That means blocking about 0.4 s before the ball arrives instead of about 0.24 s; block keeps re-tapping every 0.35 s while the ball stays close.
+
+**Using it:**
+1. Play logged Auto runs (**Save a log of this run** on). It needs at least 50 targetings with a known outcome.
+2. Press **Learn from my runs** in the panel, or run `python learn_block.py`. It prints survival by distance and saves `learned_block.json`.
+3. Tick **Learned block timing** in the panel (`--learned-block`). The output shows `Learned block timing: taps within 39 ball radii…`.
+4. Compare: play some runs with it on and some with it off, and **Score** them. Untick it to go back to the built-in rules at any time. Nothing else changes.
+
+Re-run **Learn from my runs** after more play: each round of logged games refines it.
 
 ## Camera control
 

@@ -160,6 +160,11 @@ class App:
         self.vote = tk.StringVar(value="None")
         ttk.Combobox(play, textvariable=self.vote, values=list(VOTE_MODES), state="readonly",
                      width=8).grid(row=1, column=2, sticky="w", padx=8, pady=(4, 0))
+        # Block timing learned from your own logged runs (learn_block.py); off
+        # plays with the built-in rules, so the two can be compared.
+        self.learned_block = tk.BooleanVar(value=saved.get("learned_block", False))
+        ttk.Checkbutton(play, text="Learned block timing", variable=self.learned_block).grid(
+            row=1, column=3, sticky="w", pady=(4, 0))
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
         self.stop_key = tk.StringVar(value=saved.get("stop_key", "End"))
         if self.stop_key.get() not in STOP_KEYS:
@@ -203,6 +208,7 @@ class App:
         ttk.Button(results, text="Score all runs",
                    command=lambda: self.score(all_logs=True)).grid(row=0, column=1, padx=8)
         ttk.Button(results, text="Open logs folder", command=self.open_logs).grid(row=0, column=2)
+        self.add_button(results, "Learn from my runs", self.learn_block).grid(row=0, column=3, padx=8)
 
         # --- Status / output ---------------------------------------------
         bar = ttk.Frame(main)
@@ -301,7 +307,8 @@ class App:
         try:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
-                "stop_key": self.stop_key.get()}, indent=2))
+                "stop_key": self.stop_key.get(), "learned_block": self.learned_block.get()},
+                indent=2))
         except OSError:
             pass  # not worth failing a start over
 
@@ -353,6 +360,8 @@ class App:
             argv.append("--auto")
             if VOTE_MODES[self.vote.get()]:
                 argv += ["--vote", VOTE_MODES[self.vote.get()]]
+        if self.learned_block.get():
+            argv.append("--learned-block")
         self.proc_quit_key = getattr(keyboard.Key, quit_key)
         self.run("AI running." if self.auto.get() else
                  "AI loaded -- press Insert in Roblox to turn it on.",
@@ -385,6 +394,13 @@ class App:
         ]
         self.run(f"Updating the model ({len(steps)} steps)...", steps, "Updating the model",
                  "working")
+
+    def learn_block(self):
+        """Learn block timing from the logged runs (see learn_block.py)."""
+        self.proc_quit_key = keyboard.Key.end
+        self.run("Learning block timing from your logged runs...",
+                 [("Learning block timing", [PYTHON, "learn_block.py"])],
+                 "Learning", "working")
 
     def score(self, all_logs):
         """Runs alongside whatever else is running (it only reads logs)."""

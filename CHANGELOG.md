@@ -30,6 +30,8 @@
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.
 - A warning that botting is against Roblox's Terms of Use, and a new README section, [Long runs and log size](README.md#long-runs-and-log-size): logged runs use about 29 GB per hour of play, so untick **Save a log of this run** for long runs.
 
+- **Learned block timing** — `learn_block.py` (the panel's **Learn from my runs** button) learns when to block from the AI's own logged games: which taps survived and which died, by the ball's 3D distance at the tap. The first time, taps inside the built-in distance survived 66–74%, and taps a bit farther out 87–93%, so it learned to tap earlier (39 instead of 22). It's switchable with the **Learned block timing** tick box (`--learned-block`), so it can be compared with the built-in rules and turned off any time.
+
 ### Fixed
 
 - **Camera circling in busy fights, and not finding the ball at round start** — searching for a ball that isn't after you is now one slow sweep, once it has been missing for 1 second: about 150° a second, one full turn in about 2.5 seconds, at most once every 7 seconds. It pauses as soon as anything ball-like comes into view. At normal speed the camera goes all the way round in under a second, too fast to recognise the ball on the way past. Searching while you're targeted is now normal speed instead of 1.5×. Searching every time chained into circling. Switching searching off entirely, tried briefly, left the ball unfound at the start of rounds (seen in 12% of frames instead of about 60%), so the AI barely moved.
