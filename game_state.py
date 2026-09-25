@@ -87,6 +87,11 @@ VOTE_MODES = ("classic",)
 VOTE_THRESHOLD = 0.8
 VOTE_REGION = (0.28, 0.12, 0.72, 0.42)   # x0, y0, x1, y1 as fractions of the screen
 VOTE_SIZES = (0.95, 1.0, 1.05)
+# The green tick on the button you voted for (OpenCV HSV), and how much of
+# the area next to the label it has to cover.
+TICK_LOW = (45, 150, 150)
+TICK_HIGH = (80, 255, 255)
+TICK_MIN_SHARE = 0.05
 
 
 def vote_template_path(mode):
@@ -126,3 +131,15 @@ class VoteButton:
             if score > best:
                 best, best_xy = score, (x0 + x + t.shape[1] / 2, y0 + y + t.shape[0] / 2)
         return best_xy if best >= VOTE_THRESHOLD else None
+
+    def ticked(self, frame_bgr, xy):
+        """Whether the game shows its green tick on this button -- the mark
+        of *your* vote. It sits just up and left of the label: on a frame
+        where Classic had it, 15% of that area was tick-green; with another
+        button voted, 0%."""
+        x, y = int(xy[0]), int(xy[1])
+        area = frame_bgr[max(0, y - 55):max(0, y - 5), max(0, x - 110):max(0, x - 40)]
+        if area.size == 0:
+            return False
+        green = cv2.inRange(cv2.cvtColor(area, cv2.COLOR_BGR2HSV), TICK_LOW, TICK_HIGH)
+        return (green > 0).mean() >= TICK_MIN_SHARE

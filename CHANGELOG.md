@@ -19,7 +19,11 @@
 
 - **Blocks a smaller-looking red ball** — while you're targeted, a red ball counts as big enough to block from radius 11 (was 14). In one run, 42% of contacts were under 14. Over the logged targetings the rule now fires too late in 15% instead of 24%.
 
+- **Auto vote clicked the wrong button** — the click moved the cursor in a way Roblox doesn't see, so votes landed on whichever button the cursor was already over (usually the middle one), or nowhere. It now sends real Windows mouse input, and only counts the vote once the game shows its tick on Classic, retrying up to 3 times.
+
 ### Docs
+
+- New README section, [Camera zoom](README.md#camera-zoom-keep-it-the-same-every-time): zoom changes how big everything looks to the AI, so it has to stay the same every time (12 notches out from first person here). Zooming out further breaks the "you're targeted" check.
 
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.
 - A warning that botting is against Roblox's Terms of Use, and a new README section, [Long runs and log size](README.md#long-runs-and-log-size): logged runs use about 29 GB per hour of play, so untick **Save a log of this run** for long runs.

@@ -75,7 +75,7 @@ A few percent sounds small, but a lot of the AI depends on exact pixel positions
 
 - **Pick one mode and stick to it,** for recording and for playing.
 - **Keep everything else the same too:** the same monitor resolution (tested at 1920×1080), a maximized window if you play windowed, and the same camera zoom.
-- **An easy way to get the same zoom every time:** scroll all the way in (to first person), then scroll out a fixed number of notches. This project's current setup is **12 notches out**. The ball looks smaller when zoomed out, and the block settings are measured in pixels, so a different zoom shifts them.
+- **Camera zoom matters a lot. See [Camera zoom](#camera-zoom-keep-it-the-same-every-time) below.**
 - **To switch modes:**
   1. Record several new games in the new mode.
   2. Move the old recordings out of `recordings/`, for example into a `recordings_windowed/` folder next to it, so the AI learns only from the new mode. Keep them rather than deleting them, in case you switch back.
@@ -85,6 +85,34 @@ A few percent sounds small, but a lot of the AI depends on exact pixel positions
 **How to tell which mode a recording is in:** open any image in its `frames` folder. If there's a white title bar saying "Roblox" at the top and the Windows taskbar at the bottom, it's windowed. If the game fills the whole picture, it's fullscreen.
 
 **This project's own data, for reference:** of the 14 recordings the current model was trained on, 9 are windowed (about 9,800 frames, 69%) and 5 are fullscreen (about 4,500 frames), and every live run so far was played windowed. So the AI is tuned for **windowed** play right now.
+
+## Camera zoom: keep it the same every time
+
+**How far your camera is zoomed in or out changes how well the AI plays, so set it the same way every time.**
+
+The AI judges almost everything by how big things look in pixels, and zoom changes all of it:
+
+| What the AI measures | Zoomed in | Zoomed out |
+|---|---|---|
+| **Is the ball close enough to block?** Its size and its distance from your character on screen | ball looks bigger | ball looks smaller at the same real distance, so the block rule can think it's still far away |
+| **Are you targeted?** The share of a fixed box around your character that turns red | your character fills the box | your character fills less of it, so the reading drops toward the cut-off |
+| **Is there a ball at all?** Detection has a minimum size | far balls still visible | far balls can be too small to detect |
+| **The model**, which learned from your recordings how big the ball looks when it's about to hit | matches recordings made at this zoom | only if the recordings were made at this zoom too |
+
+Measured on this project's own runs:
+
+- **"You're targeted" reading** (the AI counts you as targeted above 0.08):
+  - at the closer zoom, typically **about 0.6** while targeted;
+  - at 12 notches out, **about 0.16**, and 0.10 in the worst 10% of frames.
+  - So 12 notches still works, but zooming out further would push it under the cut-off, and the AI would stop noticing when the ball comes for you. That's the single most important thing it detects.
+- **Ball size when it reaches you:** usually radius 17–38 at the closer zoom, but **about 15** at 12 notches. 42% of contacts in one run were under the old minimum of 14, so for a red ball coming at you the minimum is now 11.
+
+**How to set it the same way every time:** scroll **all the way in** (to first person), then scroll **out a fixed number of notches**. This project's setup is **12 notches out**. Don't go further out than that.
+
+**If you change your zoom for good:**
+1. Record new games at the new zoom.
+2. Press **Update model** with **Re-track all recordings** ticked.
+3. Play a few logged runs and **Score** them. Check that the "targeted" reading and block timing still hold up; the pixel settings may need re-tuning.
 
 ## The easy way: the control panel
 
@@ -395,7 +423,7 @@ With **Save a log of this run** on, the log records each switch between playing,
 
 ### Auto vote
 
-Between rounds, while the "Game Starting in N Seconds" countdown runs, Blade Ball shows a **"Vote for the next gamemode"** panel near the top of the screen with three modes to choose from (for example Classic / 2 Teams / Randomizer, or Classic / No Abilities / 4 Teams). With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** button on that panel and clicks it once. It moves the cursor there, clicks, and puts the cursor back. It votes again in the next lobby, after the round. The other modes change from round to round, so Classic is the only choice for now. The default is `None`, which never clicks anything.
+Between rounds, while the "Game Starting in N Seconds" countdown runs, Blade Ball shows a **"Vote for the next gamemode"** panel near the top of the screen with three modes to choose from (for example Classic / 2 Teams / Randomizer, or Classic / No Abilities / 4 Teams). With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** button on that panel and clicks it. The click is sent as real Windows mouse input (`SendInput`), moving to the button in a few steps. Just setting the cursor position isn't seen by Roblox, and early versions' clicks landed on whichever button the cursor was already over. The vote only counts once the game shows its **green tick** on Classic. If no tick appears within a second, it clicks again, up to 3 times per lobby visit. It votes again in the next lobby, after the round. The other modes change from round to round, so Classic is the only choice for now. The default is `None`, which never clicks anything.
 
 It recognises the button from a picture of its label, `assets/vote_classic.png`, searching the top-middle part of the screen where the panel appears. It matches in greyscale at full size, which takes about 12 ms, and only while it's in the lobby. On every saved frame so far, frames showing the vote panel scored at least 0.995 and all others at most 0.37 (the cut-off is 0.8), whichever modes were offered alongside Classic.
 
@@ -480,4 +508,5 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
+- **Sensitive to camera zoom.** Detection, block timing and the targeted check are all measured in screen pixels, so the zoom has to stay the same (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play. That includes the window mode: record and play either windowed or fullscreen, not a mix. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)

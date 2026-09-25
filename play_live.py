@@ -193,6 +193,10 @@ ROUND_CONFIRM_CHECKS = 3 * FRAME_SCALE
 # Auto vote: while in the lobby, look for the chosen gamemode's vote button
 # this often (frames), and click it once per visit to the lobby.
 VOTE_CHECK_EVERY = 8 * FRAME_SCALE
+# A vote counts once the game shows its tick on that button; otherwise click
+# again, this long after the last click, up to VOTE_MAX_TRIES times a visit.
+VOTE_CHECK_AFTER_S = 1.0
+VOTE_MAX_TRIES = 3
 # While logging, save a lobby frame this often (seconds), so what the lobby
 # looked like (vote screen included) can be checked afterwards.
 LOBBY_FRAME_EVERY_S = 1.0
@@ -353,6 +357,32 @@ def move_mouse_relative(dx, dy):
     ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
 
+def click_at(x, y, screen_w, screen_h, from_xy):
+    """Move the mouse to (x, y) on the primary screen and left-click, as real
+    Windows mouse input (SendInput), in a few steps like a hand would.
+    Setting the cursor position directly (pynput) isn't seen by Roblox: the
+    gamemode vote clicks landed wherever its cursor already was -- the
+    middle button, or nothing."""
+    if sys.platform != "win32":
+        raise RuntimeError("clicking needs Windows (SendInput)")
+    send = ctypes.windll.user32.SendInput
+
+    def move(px, py):  # MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0-65535 scale
+        inp = _INPUT(type=0, mi=_MOUSEINPUT(int(px * 65535 / (screen_w - 1)),
+                                            int(py * 65535 / (screen_h - 1)), 0, 0x8001, 0, 0))
+        send(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+    fx, fy = from_xy
+    for i in range(1, 6):
+        move(fx + (x - fx) * i / 5, fy + (y - fy) * i / 5)
+        time.sleep(0.02)
+    time.sleep(0.08)
+    for flag in (0x0002, 0x0004):  # left down, left up
+        inp = _INPUT(type=0, mi=_MOUSEINPUT(0, 0, 0, flag, 0, 0))
+        send(1, ctypes.byref(inp), ctypes.sizeof(inp))
+        time.sleep(0.04)
+
+
 class Screen:
     """Grabs the primary monitor as a BGR image. Uses dxcam (Windows Desktop
     Duplication: ~1 ms a frame) when it's installed and works, else mss
@@ -501,7 +531,9 @@ class AIController:
                 self.vote_button = game_state.VoteButton(self.vote_mode)
             except FileNotFoundError as e:
                 print(f"[auto vote off: {e} -- see README, Auto vote]")
-        self.voted = False           # clicked the vote this lobby visit
+        self.voted = False           # the vote registered this lobby visit
+        self.vote_tries = 0          # clicks tried this lobby visit
+        self.vote_next_t = 0.0       # earliest time for the next click / check
         self.last_lobby_frame_t = 0.0
         self.phase = None          # "playing", "lobby", "no_focus" or None (not yet known)
         self.lobby_streak = 0      # checks in a row that saw the lobby
@@ -594,6 +626,7 @@ class AIController:
             self.reset_tracking()
         if phase == "playing":
             self.voted = False  # vote again next time in the lobby
+            self.vote_tries = 0
         # Without auto mode it can't tell rounds from the lobby.
         print("[AI playing]" if phase == "playing" and self.lobby is None
               else PHASE_MESSAGES[phase])
@@ -617,19 +650,23 @@ class AIController:
     def in_lobby(self, frame_bgr, t, region):
         """Auto mode, while waiting in the lobby: vote, and keep a few frames."""
         if self.vote_button is not None and not self.voted and \
+                self.vote_tries <= VOTE_MAX_TRIES and t >= self.vote_next_t and \
                 self.frame_count % VOTE_CHECK_EVERY == 0:
             spot = self.vote_button.find(frame_bgr)
-            if spot is not None:
-                # Click it. The cursor is free in the lobby; put it back after.
-                back = self.ms.position
-                self.ms.position = (region["left"] + int(spot[0]), region["top"] + int(spot[1]))
-                time.sleep(0.05)
-                self.ms.click(mouse.Button.left)
-                time.sleep(0.05)
-                self.ms.position = back
+            if spot is not None and self.vote_button.ticked(frame_bgr, spot):
+                # The game shows a tick on the mode you voted for.
                 self.voted = True
                 print(f"[voted for {self.vote_mode}]")
                 self.log_event(t, "vote")
+            elif spot is not None and self.vote_tries < VOTE_MAX_TRIES:
+                click_at(region["left"] + spot[0], region["top"] + spot[1],
+                         region["width"], region["height"], self.ms.position)
+                self.vote_tries += 1
+                self.vote_next_t = t + VOTE_CHECK_AFTER_S  # then look for the tick
+                self.log_event(t, "vote_click")
+            elif spot is not None:
+                self.vote_tries += 1  # gave up for this lobby visit
+                print(f"[vote for {self.vote_mode} didn't register after {VOTE_MAX_TRIES} clicks]")
         if self._log_frames_dir is not None and t - self.last_lobby_frame_t >= LOBBY_FRAME_EVERY_S:
             self.last_lobby_frame_t = t
             name = f"{self._log_frame_idx:06d}.jpg"
