@@ -75,6 +75,7 @@ A few percent sounds small, but a lot of the AI depends on exact pixel positions
 
 - **Pick one mode and stick to it,** for recording and for playing.
 - **Keep everything else the same too:** the same monitor resolution (tested at 1920×1080), a maximized window if you play windowed, and the same camera zoom.
+- **An easy way to get the same zoom every time:** scroll all the way in (to first person), then scroll out a fixed number of notches. This project's current setup is **12 notches out**. The ball looks smaller when zoomed out, and the block settings are measured in pixels, so a different zoom shifts them.
 - **To switch modes:**
   1. Record several new games in the new mode.
   2. Move the old recordings out of `recordings/`, for example into a `recordings_windowed/` folder next to it, so the AI learns only from the new mode. Keep them rather than deleting them, in case you switch back.
