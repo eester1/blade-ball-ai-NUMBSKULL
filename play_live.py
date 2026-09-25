@@ -918,6 +918,8 @@ class AIController:
         if self.lobby is not None:
             print(f"Auto mode: plays each round by itself and waits in the lobby between "
                   f"them. Insert = pause/resume, {quit_name} = quit.")
+            print(f"Auto vote: {self.vote_mode or 'off'}"
+                  + (" (votes once the vote panel shows in the lobby)" if self.vote_button else ""))
         else:
             print(f"Insert = toggle AI on/off, {quit_name} = quit.")
             print("Starting in OFF state -- press Insert when you're ready.")
