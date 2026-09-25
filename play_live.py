@@ -240,13 +240,7 @@ MOTION_MIN_DT = 0.06
 CAMERA_TURN_GAIN_S = 0.3
 CAMERA_MIN_TURN_S = 0.04
 CAMERA_MAX_TURN_S = 0.15
-# Once the ball has been missing this many frames, sweep toward the side
-# it was last seen on to find it again...
-CAMERA_SEARCH_AFTER_FRAMES = 8 * FRAME_SCALE
-# ...or after only this many if it was heading off the side of the screen
-# when last seen: then it's surely out of view, not just missed a frame.
-CAMERA_SEARCH_AFTER_EXIT_FRAMES = 2 * FRAME_SCALE
-CAMERA_EXIT_OFFSET = 0.7
+# Searching turns toward the side the ball was last seen on, in steps of this.
 CAMERA_SEARCH_TURN_S = 0.12
 # Mouse mode: sweep this much faster than normal turns while searching --
 # while you're targeted, every frame spent looking is a frame less to block.
@@ -258,23 +252,21 @@ CAMERA_SEARCH_SPEED = 1.5
 # about a frame late). If it does turn on you, your red highlight starts
 # the fast search anyway.
 CAMERA_FAR_RADIUS = 10
-# A lost ball that isn't after you gets this many seconds of sweeping in
-# total, then the camera waits -- until the ball is steadily tracked again
-# (a one-frame detection, often a false one, doesn't reset it). Searching
-# for up to 6s, restarted by every brief detection, spun the camera round
-# in full circles: after a block the ball often flies off far, where it's
-# small and missed even when the sweep passes it. If it turns on you, your
-# red highlight starts the (unlimited, faster) targeted search anyway.
-CAMERA_SEARCH_MAX_S = 1.0
-# ...and whether to search for a ball that isn't after you at all. Off:
-# across the Auto runs, 203 such searches found the ball again only 37% of
-# the time (in a busy fight, ability flashes and the ball darting between
-# nearby players kept restarting them -- the camera "circling"), and it
-# didn't help survival: with the ball already in view when you became
-# targeted, 25% of those targetings ended in death; without, 22%. The
-# targeted search finds it in time. Following a ball that *is* in view
-# (edge turns) is unaffected.
-CAMERA_IDLE_SEARCH = False
+# Looking for a ball that isn't after you. Two ways this went wrong:
+# - Searching whenever it was lost (for up to 6s, restarted by every brief
+#   detection -- ability flashes, the ball darting between nearby players)
+#   chained short searches into the camera circling.
+# - Not searching at all: at the start of a round the ball usually isn't
+#   in view, so it was never found -- seen in 12% of frames instead of ~60%,
+#   and the model (which only acts when it sees the ball) barely moved.
+# So: once it's been missing this long, one sweep of CAMERA_IDLE_SWEEP_S
+# (about a full turn), stopped the moment the ball is found, and at most one
+# sweep every CAMERA_IDLE_SWEEP_EVERY_S. Each round starts fresh. If the ball
+# turns on you, your red highlight starts the (unlimited, faster) targeted
+# search anyway.
+CAMERA_IDLE_SEARCH_AFTER_S = 1.0
+CAMERA_IDLE_SWEEP_S = 1.5
+CAMERA_IDLE_SWEEP_EVERY_S = 6.0
 # Drag speed in "mouse" mode, in mouse counts per second.
 CAMERA_MOUSE_SPEED = 900
 # Mouse mode: once the dragged cursor is this many pixels from the anchor,
@@ -483,10 +475,9 @@ class AIController:
         self.last_feature_t = 0.0
         self.prev_ball = None     # (x, y, radius) of the last trusted detection
         self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
-        self.last_offset = 0.0    # where the ball was heading on screen (-1..1 = left..right edge)
         self.searching = False    # the camera is sweeping to find a lost ball
         self.last_far = False     # the ball was far away and not after you (CAMERA_FAR_RADIUS)
-        self.idle_search_from = None  # when the current idle search began (see CAMERA_SEARCH_MAX_S)
+        self.idle_search_from = None  # when the last idle sweep began (see CAMERA_IDLE_SWEEP_S)
         self.prev_motion = None   # (t, x, distance to character) of the last detection
         self.screen_vx = 0.0      # ball's sideways speed on screen, px/s
         self.approach = 0.0       # how fast the ball closes in on your character, px/s
@@ -546,7 +537,6 @@ class AIController:
         self.screen_vx = self.approach = self.growth = 0.0
         self.idle_search_from = None
         self.searching = False
-        self.last_offset = 0.0
         self.features.reset()
         self.last_model = None
 
@@ -763,28 +753,26 @@ class AIController:
             if self.searching:
                 self.camera.stop()
                 self.searching = False
-            self.idle_search_from = None
             # Where it's heading, not just where it is (see CAMERA_LEAD_S) --
             # unless it's far away and not after you (CAMERA_FAR_RADIUS).
             self.last_far = ball[3] < CAMERA_FAR_RADIUS and not targeted
             lead = 0.0 if self.last_far else CAMERA_LEAD_S
             predicted_x = ball[0] + self.screen_vx * lead
             offset = (predicted_x - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
-            self.last_offset = offset
             self.last_seen_side = -1 if offset < 0 else 1
             beyond = abs(offset) - CAMERA_EDGE_ZONE
             if beyond > 0:
                 duration = min(max(beyond * CAMERA_TURN_GAIN_S / (1 - CAMERA_EDGE_ZONE),
                                    CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
                 self.camera.turn(self.last_seen_side, duration, now)
-        elif ball is None and CAMERA_IDLE_SEARCH:
-            exited = abs(self.last_offset) >= CAMERA_EXIT_OFFSET and not self.last_far
-            after = CAMERA_SEARCH_AFTER_EXIT_FRAMES if exited else CAMERA_SEARCH_AFTER_FRAMES
-            if self.missing_streak >= after:
-                if self.idle_search_from is None:
-                    self.idle_search_from = now
-                if now - self.idle_search_from <= CAMERA_SEARCH_MAX_S:
-                    self.search(now, fast=False)
+        elif ball is None:
+            last = self.idle_search_from  # when the last idle sweep began
+            if last is not None and now - last <= CAMERA_IDLE_SWEEP_S:
+                self.search(now, fast=False)  # keep sweeping
+            elif self.missing_streak >= CAMERA_IDLE_SEARCH_AFTER_S * FPS and \
+                    (last is None or now - last >= CAMERA_IDLE_SWEEP_EVERY_S):
+                self.idle_search_from = now
+                self.search(now, fast=False)
         # else: a detection that just jumped here -- often a decoy (a sparkle,
         # a lantern, another player's cosmetic), so don't swing the camera
         # toward it until it's held up for a few frames.
