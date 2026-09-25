@@ -91,7 +91,7 @@ STOP_KEYS = {
 VOTE_MODES = {"None": None, "Classic": "classic"}
 
 # The panel's choices (camera, stop key, ...) are remembered between runs --
-# except Auto and its vote, which always start off.
+# except Auto, its vote and Learned block timing, which always start off.
 SETTINGS_PATH = HERE / "panel_settings.json"
 
 
@@ -205,8 +205,9 @@ class App:
         ttk.Combobox(play, textvariable=self.vote, values=list(VOTE_MODES), state="readonly",
                      width=8).grid(row=1, column=2, sticky="w", padx=8, pady=(4, 0))
         # Block timing learned from your own logged runs (learn_block.py); off
-        # plays with the built-in rules, so the two can be compared.
-        self.learned_block = tk.BooleanVar(value=saved.get("learned_block", False))
+        # plays with the built-in rules, so the two can be compared. Always
+        # starts unticked, whatever was used last time.
+        self.learned_block = tk.BooleanVar(value=False)
         ttk.Checkbutton(play, text="Learned block timing", variable=self.learned_block).grid(
             row=1, column=3, sticky="w", pady=(4, 0))
         # Experimental block options, to compare with and without (each run's
@@ -369,7 +370,7 @@ class App:
         try:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
-                "stop_key": self.stop_key.get(), "learned_block": self.learned_block.get(),
+                "stop_key": self.stop_key.get(),
                 "rounds_total": self.rounds_total, "spam_block": self.spam_block.get(),
                 "hold_hover": self.hold_hover.get()},
                 indent=2))
