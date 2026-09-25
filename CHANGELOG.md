@@ -17,6 +17,8 @@
 
 - **Blocks balls that are close in 3D, not just on screen** — while you're targeted, the ball's real distance from your character (worked out from its screen position and size) also counts as close. A ball coming from in front, from above or near the camera could hit you while still far from your character on screen. Across 278 logged targetings, the block rule now fires in 87% instead of 68%, and too late in 23% instead of 46%.
 
+- **Blocks a smaller-looking red ball** — while you're targeted, a red ball counts as big enough to block from radius 11 (was 14). In one run, 42% of contacts were under 14. Over the logged targetings the rule now fires too late in 15% instead of 24%.
+
 ### Docs
 
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.

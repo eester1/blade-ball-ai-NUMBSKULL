@@ -130,6 +130,13 @@ TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 # Raise the distances if it blocks too late, lower them if too early.
 BLOCK_MAX_CHAR_DIST = 200
 BLOCK_MIN_RADIUS = 14
+# ...but a red ball while you're targeted counts from this size: in one run
+# (camera probably zoomed out a little) 42% of contacts were under radius
+# 14, and a fast final ball was let through at 165px because it looked
+# 10.5. The far practice-mode ball that spammed blocks measured 8-10. Over
+# the logged targetings this makes the rule fire in 89% instead of 85%,
+# and too late (<0.1s) in 15% instead of 24%.
+BLOCK_MIN_RADIUS_TARGETED = 11
 BLOCK_BIG_RADIUS = 45
 BLOCK_BIG_MAX_CHAR_DIST = 320
 # Judge "close" by where the ball will be this far ahead, from how fast
@@ -319,7 +326,8 @@ def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0, 
     distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
     distance -= min(max(approach_speed, 0.0) * BLOCK_LEAD_S, BLOCK_MAX_LEAD_PX)
     radius += min(max(growth, 0.0) * BLOCK_LEAD_S, radius * BLOCK_MAX_GROWTH_LEAD)
-    close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= BLOCK_MIN_RADIUS) or \
+    min_radius = BLOCK_MIN_RADIUS_TARGETED if coming else BLOCK_MIN_RADIUS
+    close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= min_radius) or \
         (distance <= BLOCK_BIG_MAX_CHAR_DIST and radius >= BLOCK_BIG_RADIUS)
     return (close and (model_wants or coming)) or (coming and radius >= BLOCK_HUGE_RADIUS)
 
