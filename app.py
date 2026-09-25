@@ -21,7 +21,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from pynput import keyboard
@@ -100,6 +100,40 @@ def load_settings():
         return json.loads(SETTINGS_PATH.read_text())
     except (OSError, ValueError):
         return {}
+
+
+def folder_size(path):
+    """Total size in bytes of the files in a folder (0 if it's gone)."""
+    if not path.is_dir():
+        return 0
+    return sum(f.stat().st_size for f in path.iterdir() if f.is_file())
+
+
+def log_runs():
+    """Logged runs in live_logs/, oldest first, as dicts with the run's name,
+    its .jsonl log, its screenshot folder and that folder's size."""
+    runs = []
+    for log in sorted((HERE / "live_logs").glob("live_*.jsonl")):
+        frames = log.with_name(log.stem + "_frames")
+        runs.append({"name": log.stem, "log": log, "frames": frames,
+                     "frames_bytes": folder_size(frames)})
+    return runs
+
+
+def delete_screenshots(runs):
+    """Delete the screenshot folders of these runs, keeping their .jsonl logs
+    (all that scoring and Learn from my runs need). Returns bytes freed."""
+    freed = 0
+    for run in runs:
+        frames = run["frames"]
+        if not frames.is_dir():
+            continue
+        for f in frames.iterdir():
+            if f.is_file():
+                freed += f.stat().st_size
+                f.unlink()
+        frames.rmdir()
+    return freed
 
 
 def sessions_needing_tracking(retrack_all):
@@ -219,6 +253,7 @@ class App:
                    command=lambda: self.score(all_logs=True)).grid(row=0, column=1, padx=8)
         ttk.Button(results, text="Open logs folder", command=self.open_logs).grid(row=0, column=2)
         self.add_button(results, "Learn from my runs", self.learn_block).grid(row=0, column=3, padx=8)
+        ttk.Button(results, text="Free space", command=self.free_space).grid(row=0, column=4)
 
         # --- Status / output ---------------------------------------------
         bar = ttk.Frame(main)
@@ -434,6 +469,68 @@ class App:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.output.put("\n>>> Scoring runs\n" + result.stdout + result.stderr)
         threading.Thread(target=work, daemon=True).start()
+
+    def free_space(self):
+        """A window listing logged runs, oldest first, to delete the
+        screenshots of old ones -- the big part of a log (~29 GB per hour of
+        play). Their .jsonl logs stay, so scoring and Learn from my runs keep
+        using them; only looking at those runs frame by frame is lost."""
+        win = tk.Toplevel(self.root)
+        win.title("Free space -- delete old screenshots")
+        ttk.Label(win, justify="left", padding=8, text=(
+            "Logged runs, oldest first. Deleting a run's screenshots frees almost all of its\n"
+            "space. Its small .jsonl log is kept, so Score and Learn from my runs still use it.\n"
+            "Only looking at that run frame by frame is lost. Keep your newest runs, in case\n"
+            "something needs checking.")).pack(fill="x")
+        box = tk.Listbox(win, selectmode="extended", width=70, height=16, font=("Consolas", 9))
+        box.pack(fill="both", expand=True, padx=8)
+        summary = tk.StringVar()
+        ttk.Label(win, textvariable=summary, padding=(8, 4)).pack(fill="x")
+        shown = []
+
+        def refresh():
+            box.delete(0, "end")
+            shown.clear()
+            runs = log_runs()
+            # The newest run may be the one being logged right now -- leave it.
+            if self.proc is not None and runs:
+                runs = runs[:-1]
+            for run in runs:
+                gb = run["frames_bytes"] / 1e9
+                label = f"{run['name'][5:]}   screenshots {gb:6.2f} GB" if run["frames"].is_dir() \
+                    else f"{run['name'][5:]}   (screenshots already deleted)"
+                box.insert("end", label)
+                shown.append(run)
+            total = sum(r["frames_bytes"] for r in shown) / 1e9
+            summary.set(f"{len(shown)} runs, {total:.1f} GB of screenshots.")
+
+        def select_old():
+            box.selection_clear(0, "end")
+            if len(shown) > 3:
+                box.selection_set(0, len(shown) - 4)
+
+        def delete_selected():
+            chosen = [shown[i] for i in box.curselection()]
+            chosen = [r for r in chosen if r["frames"].is_dir()]
+            if not chosen:
+                return
+            gb = sum(r["frames_bytes"] for r in chosen) / 1e9
+            if not messagebox.askyesno(
+                    "Delete screenshots?",
+                    f"Delete the screenshots of {len(chosen)} run(s), freeing {gb:.1f} GB?\n\n"
+                    f"Their .jsonl logs are kept. This can't be undone.", parent=win):
+                return
+            freed = delete_screenshots(chosen)
+            refresh()
+            summary.set(summary.get() + f"   Freed {freed / 1e9:.1f} GB.")
+
+        buttons = ttk.Frame(win, padding=8)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Select all but the newest 3", command=select_old).pack(side="left")
+        ttk.Button(buttons, text="Delete screenshots", command=delete_selected).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Open logs folder", command=self.open_logs).pack(side="left")
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+        refresh()
 
     def open_logs(self):
         logs = HERE / "live_logs"
