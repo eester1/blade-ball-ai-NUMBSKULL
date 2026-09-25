@@ -154,7 +154,10 @@ This opens a window with a button for everything, so you never have to type the 
 - **Update the AI from recordings** — **Update model** teaches the AI from everything in `recordings/` (see below). The options:
   - **Re-track all recordings** — tracks the ball again in every recording, not just new ones. Slow; only needed after the ball detection code changes.
   - **Also retrain the ball detector** — retrains the learned ball detector too. Slow; worth doing after recording new sessions, especially on new maps.
-- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)), **Open logs folder**, and **Learn from my runs**. That one re-learns the block timing from every logged Auto run in `live_logs/`, and takes a few seconds. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games). These work at any time, even while the AI is playing.
+- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)), **Open logs folder**, **Learn from my runs** and **Free space**.
+  - **Learn from my runs** re-learns the block timing from every logged Auto run in `live_logs/`, and takes a few seconds. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
+  - **Free space** opens a list of your logged runs, oldest first, with how much space each one's screenshots take. Select old runs (or press **Select all but the newest 3**) and **Delete screenshots**. That frees almost all of each run's space and keeps its small `.jsonl` log, so Score and Learn from my runs still use it. The run being logged right now is never listed. See [Long runs and log size](#long-runs-and-log-size).
+  - The scoring buttons, Open logs folder and Free space work at any time, even while the AI is playing.
 - **Stop** — ends whatever is running, safely: it presses the script's own quit key (your stop key for the AI, End for the others), which lets go of every held key and button, and only force-closes the script if it doesn't respond.
 - **Output box** — everything the running script prints.
 
@@ -510,6 +513,7 @@ So a whole night of play with logging on is **roughly 100–200 GB**. For exampl
 - **Long runs: untick Save a log of this run** (leave out `--log`). The AI plays exactly the same; it just keeps no record. The catch is that **Score latest run** has nothing to score for that run, and it can't be analysed afterwards.
 - **Runs you want scored or analysed: keep logging on, and keep them short.** 15–30 minutes each (about 7–15 GB) is plenty. Two or three of those show far more than one very long run.
 - **Recordings are separate and much smaller.** `recordings/` (your own gameplay, used by **Update model**) grows by roughly 0.3–0.7 GB per recording. The AI's current model is already built, so deleting a recording doesn't change how the AI plays until you next press **Update model**. Then it simply learns from the recordings that are left. To keep an old recording without training on it, move its folder out of `recordings/`.
+- **Free space** (panel button): lists your logged runs oldest first and deletes the screenshots of the ones you pick, keeping their `.jsonl` logs. That's the easy way to clean up.
 - **Clean up old logs.** Delete old `live_logs/live_<date>_<time>.jsonl` files together with their `_frames` folders once you're done with them (**Open logs folder** in the panel). Nothing else in the project depends on them. Recordings in `recordings/` are separate, and are what the AI learns from, so keep those.
 
 ## Diagnosing bad behavior

@@ -32,6 +32,7 @@
 
 - **Learned block timing** — `learn_block.py` (the panel's **Learn from my runs** button) learns when to block from the AI's own logged games: which taps survived and which died, by the ball's 3D distance at the tap. The first time, taps inside the built-in distance survived 66–74%, and taps a bit farther out 87–93%, so it learned to tap earlier (39 instead of 22). It's switchable with the **Learned block timing** tick box (`--learned-block`), so it can be compared with the built-in rules and turned off any time. It only learns from runs played with **Save a log of this run** and **Auto** on.
 
+- **Free space button** — lists logged runs oldest first with their screenshot sizes, and deletes the screenshots of the ones you pick (they're 99% of a log's size), keeping the `.jsonl` logs that scoring and Learn from my runs use.
 - **Round counter in the panel** — under the banner: rounds Auto has started playing this run, and all time.
 
 ### Fixed
