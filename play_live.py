@@ -938,6 +938,11 @@ class AIController:
         if self.screen is None:
             self.screen = Screen(region)
         print(f"Screen capture: {self.screen.method}, {FPS} fps")
+        # Which settings this run played with, so runs can be compared later
+        # (e.g. learned vs built-in block timing).
+        self.log_event(time.time(), "settings", block_3d_dist=BLOCK_3D_DIST,
+                       auto=self.lobby is not None, vote=self.vote_mode, fps=FPS,
+                       capture=self.screen.method)
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
         self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)

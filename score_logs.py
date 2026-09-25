@@ -61,6 +61,7 @@ def score(path, cfg):
     lines = load(path)
     # Phase changes ("playing", "lobby", "no_focus") are logged between frames.
     lobby_times = [e["t"] for e in lines if e.get("event") == "lobby"]
+    settings = next((e for e in lines if e.get("event") == "settings"), {})
     entries = [e for e in lines if "event" not in e]
     if not entries or "self_red" not in entries[0] or "tapped" not in entries[0]:
         return None  # made by an older play_live.py that didn't log these
@@ -117,6 +118,7 @@ def score(path, cfg):
         "episodes": rows,
         "taps": len(taps),
         "wasted_taps": sum(id(e) not in counted_taps for e in taps),
+        "block_3d_dist": settings.get("block_3d_dist"),
     }
 
 
@@ -130,6 +132,8 @@ def summarize(results):
 
 def print_report(res):
     print(f"\n=== {res['path']} ===")
+    if res["block_3d_dist"] is not None:
+        print(f"block timing: taps within {res['block_3d_dist']} ball radii (3D)")
     print(f"length {res['duration']:.0f}s | ball detected in {100 * res['ball_seen']:.0f}% "
           f"of frames | {res['taps']} block taps, {res['wasted_taps']} while not targeted")
     if not res["episodes"]:
