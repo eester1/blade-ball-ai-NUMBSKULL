@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- **Camera circling in busy fights** — the camera no longer searches for a ball that isn't after you at all. Those searches found the ball only 37% of the time and didn't improve survival (25% of targetings ended in death with the ball already in view, 22% without), while in busy fights they chained into circling. In replays the camera now turns about 9% of the time instead of 20%, with the same blocking. It still follows a ball it can see, and still searches as soon as you're targeted.
 - **Camera spinning in circles** — after a block the ball often flies off far away, and the camera kept searching for up to 6 seconds, restarted by every brief detection. A search for a ball that isn't after you is now limited to about a second in total, and resets only once the ball is properly tracked again. Searching while you're targeted is unchanged.
 - **False "you're targeted" alarms on orange maps** — on the orange desert arena, a dark outfit lit orange (plus a pink sword glow) looked dimly red and kept setting off the targeted check, which sent the camera searching. Only bright red counts now; real highlights read the same as before.
 - **Tracking pale sky instead of the ball** — gaps of pale sky between rocks or trees could pass as a white ball (a "core", the check that recovers a ball merged with its trail), and the tracker stayed locked on them while the real ball came in. White cores now have to be almost pure white, like the real ball.

@@ -250,6 +250,15 @@ CAMERA_FAR_RADIUS = 10
 # small and missed even when the sweep passes it. If it turns on you, your
 # red highlight starts the (unlimited, faster) targeted search anyway.
 CAMERA_SEARCH_MAX_S = 1.0
+# ...and whether to search for a ball that isn't after you at all. Off:
+# across the Auto runs, 203 such searches found the ball again only 37% of
+# the time (in a busy fight, ability flashes and the ball darting between
+# nearby players kept restarting them -- the camera "circling"), and it
+# didn't help survival: with the ball already in view when you became
+# targeted, 25% of those targetings ended in death; without, 22%. The
+# targeted search finds it in time. Following a ball that *is* in view
+# (edge turns) is unaffected.
+CAMERA_IDLE_SEARCH = False
 # Drag speed in "mouse" mode, in mouse counts per second.
 CAMERA_MOUSE_SPEED = 900
 # Mouse mode: once the dragged cursor is this many pixels from the anchor,
@@ -711,7 +720,7 @@ class AIController:
                 duration = min(max(beyond * CAMERA_TURN_GAIN_S / (1 - CAMERA_EDGE_ZONE),
                                    CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
                 self.camera.turn(self.last_seen_side, duration, now)
-        elif ball is None:
+        elif ball is None and CAMERA_IDLE_SEARCH:
             exited = abs(self.last_offset) >= CAMERA_EXIT_OFFSET and not self.last_far
             after = CAMERA_SEARCH_AFTER_EXIT_FRAMES if exited else CAMERA_SEARCH_AFTER_FRAMES
             if self.missing_streak >= after:
