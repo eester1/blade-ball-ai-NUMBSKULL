@@ -139,6 +139,7 @@ This opens a window with a button for everything, so you never have to type the 
   | red — *RECORDING* | Your gameplay is being recorded |
   | blue | Camera test or model update in progress |
 
+- **Round counter** (under the banner) — how many rounds Auto has started playing: **this run** and **all time** (kept in `panel_settings.json`). Coming back after clicking out of Roblox doesn't count as a new round.
 - **Play**
   - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
   - **Invert camera** — tick this if the camera test turns the wrong way.
@@ -427,7 +428,7 @@ With **Save a log of this run** on, the log records each switch between playing,
 
 Between rounds, while the "Game Starting in N Seconds" countdown runs, Blade Ball shows a **"Vote for the next gamemode"** panel near the top of the screen with three modes to choose from (for example Classic / 2 Teams / Randomizer, or Classic / No Abilities / 4 Teams). With **Auto vote** set to `Classic` (`--vote classic`), each time Auto is in the lobby it looks for the **Classic** button on that panel and clicks it. The click is sent as real Windows mouse input (`SendInput`), moving to the button in a few steps. Just setting the cursor position isn't seen by Roblox, and early versions' clicks landed on whichever button the cursor was already over. The vote only counts once the game shows its **green tick** on Classic. If no tick appears within a second, it clicks again, up to 3 times per lobby visit. It votes again in the next lobby, after the round. The other modes change from round to round, so Classic is the only choice for now. The default is `None`, which never clicks anything.
 
-It recognises the button from a picture of its label, `assets/vote_classic.png`, searching the top-middle part of the screen where the panel appears. It matches in greyscale at full size, which takes about 12 ms, and only while it's in the lobby. On every saved frame so far, frames showing the vote panel scored at least 0.995 and all others at most 0.37 (the cut-off is 0.8), whichever modes were offered alongside Classic.
+It recognises the button from pictures of its label: `assets/vote_classic.png` for how it normally looks, and `assets/vote_classic_selected.png` for how it looks with the mouse over it (bright yellow and slightly bigger, which is also how it stays after you've voted). Without the second picture, the vote went through but couldn't be confirmed, and when the cursor was left over the button from the round before, it wasn't clicked at all. It searches the top-middle part of the screen where the panel appears. It matches in greyscale at full size, which takes about 12 ms, and only while it's in the lobby. On every saved frame so far, frames showing the vote panel scored at least 0.995 and all others at most 0.37 (the cut-off is 0.8), whichever modes were offered alongside Classic.
 
 If Blade Ball restyles the vote panel, take a screenshot of it, crop the "Classic" label out of the button at full size, and save it over `assets/vote_classic.png`. While Auto waits in the lobby with **Save a log of this run** on, it also saves one screenshot per second into the run's `_frames` folder, which is handy for this.
 
@@ -508,6 +509,7 @@ So a whole night of play with logging on is **roughly 100–200 GB**. For exampl
 
 - **Long runs: untick Save a log of this run** (leave out `--log`). The AI plays exactly the same; it just keeps no record. The catch is that **Score latest run** has nothing to score for that run, and it can't be analysed afterwards.
 - **Runs you want scored or analysed: keep logging on, and keep them short.** 15–30 minutes each (about 7–15 GB) is plenty. Two or three of those show far more than one very long run.
+- **Recordings are separate and much smaller.** `recordings/` (your own gameplay, used by **Update model**) grows by roughly 0.3–0.7 GB per recording. The AI's current model is already built, so deleting a recording doesn't change how the AI plays until you next press **Update model**. Then it simply learns from the recordings that are left. To keep an old recording without training on it, move its folder out of `recordings/`.
 - **Clean up old logs.** Delete old `live_logs/live_<date>_<time>.jsonl` files together with their `_frames` folders once you're done with them (**Open logs folder** in the panel). Nothing else in the project depends on them. Recordings in `recordings/` are separate, and are what the AI learns from, so keep those.
 
 ## Diagnosing bad behavior
