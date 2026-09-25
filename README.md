@@ -16,6 +16,7 @@ There is no game-engine integration and no memory reading — everything is done
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
 - **Only acts in Roblox** — it sends input only while the Roblox window is active, so it never types into another program.
 - **Learns from you** — record your own games; the AI copies what you do in each situation.
+- **[Learns from its own games](#learned-block-timing-learning-from-the-ais-own-games)** — press **Learn from my runs** and it works out, from its own logged games, when blocking actually saved it, then blocks at that timing (**Learned block timing**). Needs **Save a log of this run** on.
 - **Keeps the ball in view** — turns the camera to follow the ball, and swings round to find it the moment you're targeted.
 - **Block timing** — blocks when the ball is about to reach you, judged from its distance, size and speed.
 - **Run scoring** — after each run, lists every time you were targeted and whether you blocked, survived or died.
@@ -141,9 +142,10 @@ This opens a window with a button for everything, so you never have to type the 
 - **Play**
   - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
   - **Invert camera** — tick this if the camera test turns the wrong way.
-  - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored and problems diagnosed. Leave it on.
+  - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored, problems can be diagnosed, and **the AI can learn from it** (Learn from my runs only learns from logged runs). Leave it on unless you're running for hours (see [Long runs and log size](#long-runs-and-log-size)).
   - **Auto** (unticked every time the panel opens) — tick it and the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Left unticked, you switch the AI on and off yourself with Insert.
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
+  - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. The panel remembers it. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -151,7 +153,7 @@ This opens a window with a button for everything, so you never have to type the 
 - **Update the AI from recordings** — **Update model** teaches the AI from everything in `recordings/` (see below). The options:
   - **Re-track all recordings** — tracks the ball again in every recording, not just new ones. Slow; only needed after the ball detection code changes.
   - **Also retrain the ball detector** — retrains the learned ball detector too. Slow; worth doing after recording new sessions, especially on new maps.
-- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)), **Open logs folder**, and **Learn from my runs** (see [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games)). These work at any time, even while the AI is playing.
+- **How did it go?** — **Score latest run**, **Score all runs** (see [Scoring runs](#scoring-runs-score_logspy)), **Open logs folder**, and **Learn from my runs**. That one re-learns the block timing from every logged Auto run in `live_logs/`, and takes a few seconds. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games). These work at any time, even while the AI is playing.
 - **Stop** — ends whatever is running, safely: it presses the script's own quit key (your stop key for the AI, End for the others), which lets go of every held key and button, and only force-closes the script if it doesn't respond.
 - **Output box** — everything the running script prints.
 
@@ -433,6 +435,20 @@ If Blade Ball restyles the vote panel, take a screenshot of it, crop the "Classi
 
 The built-in block rules were tuned by hand. This lets the AI learn **when to block from its own results** instead: which blocks actually saved it, and which didn't. It doesn't copy you; it learns from outcomes, so it can end up better than any recording.
 
+> [!IMPORTANT]
+> **It can only learn from runs played with Save a log of this run ticked, and with Auto on.** The log is where it finds what the ball looked like at every block tap. Auto's lobby markers in the log are how it knows whether each block ended in survival or death. Runs without logging, or without Auto, are invisible to it.
+
+### The routine
+
+1. In the panel, tick **Auto** and **Save a log of this run** (and **Learned block timing** once it has learned something), then **Start AI**.
+2. Let it play several rounds, say 5–10.
+3. Press **Learn from my runs**. The output box shows survival by distance and what it learned.
+4. Repeat. Each batch of logged rounds adds more examples, so the learned timing gets more reliable over time.
+
+It needs at least **50 targetings with a known outcome** before it will learn anything, a few Auto rounds' worth. With fewer, it says so and changes nothing.
+
+### What it does
+
 **How it works:** every logged Auto run records, for each time you were targeted, what the ball looked like when the AI tapped block, and whether you survived or died. `learn_block.py` takes the tap that mattered in each targeting (the last one before the ball arrived) and looks at how survival depends on the ball's **3D distance** from you at that moment. The first time it ran (203 targetings), the pattern was clear:
 
 | 3D distance at the tap (ball radii) | Survived |
@@ -443,13 +459,15 @@ The built-in block rules were tuned by hand. This lets the AI learn **when to bl
 
 Blocking while the ball is still a bit farther out works much better, and the far taps weren't just easier, slower balls. It picks the **closest** tap distance where taps just inside it survive at least 90% of the time: **39** the first time, versus 22 built in. That means blocking about 0.4 s before the ball arrives instead of about 0.24 s; block keeps re-tapping every 0.35 s while the ball stays close.
 
-**Using it:**
-1. Play logged Auto runs (**Save a log of this run** on). It needs at least 50 targetings with a known outcome.
-2. Press **Learn from my runs** in the panel, or run `python learn_block.py`. It prints survival by distance and saves `learned_block.json`.
-3. Tick **Learned block timing** in the panel (`--learned-block`). The output shows `Learned block timing: taps within 39 ball radii…`.
-4. Compare: play some runs with it on and some with it off, and **Score** them. Untick it to go back to the built-in rules at any time. Nothing else changes.
+### Details
 
-Re-run **Learn from my runs** after more play: each round of logged games refines it.
+- **What's learned:** a single setting, the 3D distance at which to tap block while a red ball is coming at you. It's saved in `learned_block.json` in the project folder, which stays on your computer and isn't uploaded to GitHub. `learned_at` and `targetings` in that file say when it was learned and from how much data.
+- **Switching it on and off:** the **Learned block timing** tick box (`python play_live.py model.joblib --learned-block`). When the AI starts, the output box shows either `Learned block timing: taps within 39 ball radii (3D), learned … from … targetings`, or that nothing has been learned yet (it then uses the built-in rules). Unticked, it uses the built-in rules; nothing else is affected, so you can compare the two and go back at any time.
+- **Pressing Learn from my runs is always safe.** It only reads your logs and rewrites that one setting. Pressing it again with no new runs gives the same result.
+- **What counts as an outcome:** back in the lobby within 3 seconds of being targeted counts as died (or the round ended, if you'd just won). Targeted again within 15 seconds counts as survived. Targetings with neither, and targetings with no block tap, are left out.
+- **How the distance is chosen:** the block fires as soon as the ball comes within the learned distance, so the tap lands just inside it. It picks the closest distance for which taps in the 15 radii just inside it survived at least 90% of the time, with at least 15 taps there. That way blocks come as early as needed and no earlier.
+- **By hand:** `python learn_block.py` does the same as the button, and `python learn_block.py --dry-run` prints what it would learn without saving.
+- **Comparing:** play some logged runs with it ticked and some unticked, and **Score** them (**Score all runs** gives a total). Survival per targeting with the built-in rules was about 75–85% in recent runs.
 
 ## Camera control
 
@@ -526,7 +544,7 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball.
 - **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do.
 - **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
-- **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from a handful of live runs; odd approach angles or map lighting may need further tuning — `score_logs.py` shows the ball's distance and size at every tap.
+- **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from live runs. **Learned block timing** can replace the key distance with one learned from the AI's own results, but only from **logged Auto runs**. Its outcome labels are approximate ("died" can mean the round ended), and it learns a single distance, not a full timing model. `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. Red lava next to your character used to read as targeted too; only the tint's darker red counts now (`self_highlight_val_max` 180). The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).

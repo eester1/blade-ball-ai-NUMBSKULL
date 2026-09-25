@@ -30,7 +30,7 @@
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.
 - A warning that botting is against Roblox's Terms of Use, and a new README section, [Long runs and log size](README.md#long-runs-and-log-size): logged runs use about 29 GB per hour of play, so untick **Save a log of this run** for long runs.
 
-- **Learned block timing** — `learn_block.py` (the panel's **Learn from my runs** button) learns when to block from the AI's own logged games: which taps survived and which died, by the ball's 3D distance at the tap. The first time, taps inside the built-in distance survived 66–74%, and taps a bit farther out 87–93%, so it learned to tap earlier (39 instead of 22). It's switchable with the **Learned block timing** tick box (`--learned-block`), so it can be compared with the built-in rules and turned off any time.
+- **Learned block timing** — `learn_block.py` (the panel's **Learn from my runs** button) learns when to block from the AI's own logged games: which taps survived and which died, by the ball's 3D distance at the tap. The first time, taps inside the built-in distance survived 66–74%, and taps a bit farther out 87–93%, so it learned to tap earlier (39 instead of 22). It's switchable with the **Learned block timing** tick box (`--learned-block`), so it can be compared with the built-in rules and turned off any time. It only learns from runs played with **Save a log of this run** and **Auto** on.
 
 ### Fixed
 
