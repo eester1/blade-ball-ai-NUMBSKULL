@@ -494,6 +494,16 @@ It also **keeps spamming between hits**. For up to 0.9 s after a targeting ends,
 
 **Narrowed to 0.9 s:** it first triggered within 1.2 s, and those runs did worse. Over 155 logged fast exchanges, **35%** died when targeted again within 0.9 s, against **19%** at 0.9–1.2 s. So it now spams only in the really fast exchanges, where the normal rules lose most.
 
+**Live result: not recommended, leave it off.** Over 20 rounds with the 0.9 s trigger, compared with 30 rounds without spam (same model and settings otherwise):
+
+| Fast exchange | Without spam | With spam |
+|---|---|---|
+| Targeted again within 0.9 s | 67% survived (27) | **20%** survived (10) |
+| Targeted again within 0.9–1.2 s | 80% survived (10) | 33% survived (3) |
+| All targetings | 81% (141) | 72% (61) |
+
+Tapping block over and over seems to spend the block before the ball arrives, rather than catching it.
+
 The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
 
 ### Hold block while the ball hovers (`--hold-hover`)
