@@ -151,6 +151,19 @@ BLOCK_MAX_GROWTH_LEAD = 0.5
 # bottom of the screen, well away from your character (a death: radius 97,
 # 408px away, never blocked).
 BLOCK_HUGE_RADIUS = 70
+# Screen distance from your character is a poor measure of "close" when the
+# ball comes from in front of you, from above or near the camera: it can be
+# on you while still 200-500px away on screen (two deaths, never blocked in
+# time). Its apparent size gives its depth, so size + screen position give
+# its real 3D distance from your character (see ball_distance_3d). Over 278
+# logged targetings that separated "at contact" from "half a second before"
+# 2.6x better than screen distance. While you're targeted and the ball is
+# red, it also counts as close within this 3D distance (in ball radii):
+# replayed on those targetings, the block rule then fires in 87% of them
+# instead of 68%, and too late (<0.1s before contact) in 23% instead of 46%.
+BLOCK_3D_DIST = 22
+CAMERA_FOV_DEG = 70      # Roblox's default vertical field of view
+CHARACTER_DEPTH = 30     # camera to your character, in ball radii (fitted to logged contacts)
 
 # Your character's red "targeted" tint can blink off while the ball is
 # still coming. For this long after last seeing it, keep counting as
@@ -280,18 +293,34 @@ CAMERA_MOUSE_SPEED = 900
 CAMERA_REANCHOR_PX = 250
 
 
-def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0, growth=0.0):
+def ball_distance_3d(x, y, radius, character_xy, screen_h):
+    """The ball's distance from your character in 3D, in ball radii, from its
+    screen position and apparent size (a perspective camera: size shrinks in
+    proportion to depth). Approximate -- it assumes the default field of
+    view and your camera zoom (CHARACTER_DEPTH)."""
+    focal = (screen_h / 2) / np.tan(np.radians(CAMERA_FOV_DEG / 2))
+    depth = focal / radius
+    mid_x, mid_y = character_xy[0], screen_h / 2
+    bx, by = (x - mid_x) / radius, (y - mid_y) / radius
+    char_y = (character_xy[1] - mid_y) * CHARACTER_DEPTH / focal
+    return (bx ** 2 + (by - char_y) ** 2 + (depth - CHARACTER_DEPTH) ** 2) ** 0.5
+
+
+def should_block(model_wants, ball, targeted, character_xy, approach_speed=0.0, growth=0.0,
+                 screen_h=1080):
     """Final block decision for this frame (see BLOCK_* above).
     approach_speed: how fast the ball is closing in on your character on
     screen, in px/s; growth: how fast its radius is growing, in px/s (0 if
     unknown)."""
     x, y, state, radius = ball
+    coming = targeted and state == "targeting"
+    if coming and ball_distance_3d(x, y, radius, character_xy, screen_h) <= BLOCK_3D_DIST:
+        return True
     distance = ((x - character_xy[0]) ** 2 + (y - character_xy[1]) ** 2) ** 0.5
     distance -= min(max(approach_speed, 0.0) * BLOCK_LEAD_S, BLOCK_MAX_LEAD_PX)
     radius += min(max(growth, 0.0) * BLOCK_LEAD_S, radius * BLOCK_MAX_GROWTH_LEAD)
     close = (distance <= BLOCK_MAX_CHAR_DIST and radius >= BLOCK_MIN_RADIUS) or \
         (distance <= BLOCK_BIG_MAX_CHAR_DIST and radius >= BLOCK_BIG_RADIUS)
-    coming = targeted and state == "targeting"
     return (close and (model_wants or coming)) or (coming and radius >= BLOCK_HUGE_RADIUS)
 
 
@@ -926,7 +955,7 @@ class AIController:
                     self.measure_motion(ball, capture_t, character_xy, targeted)
 
                     if should_block("block" in desired, ball, targeted, character_xy,
-                                    self.approach, self.growth):
+                                    self.approach, self.growth, height):
                         desired = desired | {"block"}
                     else:
                         desired = desired - {"block"}

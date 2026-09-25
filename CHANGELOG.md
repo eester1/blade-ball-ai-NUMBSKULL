@@ -15,6 +15,8 @@
 
 - **30 looks per second instead of 15** — screen capture now uses `dxcam` when it's installed (about 1 ms instead of about 33 ms), so the AI runs at 30 fps: measured 29.8 fps with all detection. Ball tracking, block timing and the camera use every frame. The model still sees the ball 15 times a second, like the recordings it learned from. Settings that count frames were doubled to mean the same time, and logs still save 15 screenshots a second, so they don't get bigger. Falls back to `mss` at the old speed without dxcam.
 
+- **Blocks balls that are close in 3D, not just on screen** — while you're targeted, the ball's real distance from your character (worked out from its screen position and size) also counts as close. A ball coming from in front, from above or near the camera could hit you while still far from your character on screen. Across 278 logged targetings, the block rule now fires in 87% instead of 68%, and too late in 23% instead of 46%.
+
 ### Docs
 
 - New README section, [Windowed or fullscreen?](README.md#windowed-or-fullscreen-play-the-way-you-record): the AI plays best in the window mode its recordings were made in, why, and how to switch modes.
