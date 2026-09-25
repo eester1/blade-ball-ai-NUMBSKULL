@@ -4,6 +4,8 @@
 
 ### New
 
+- **Faster reactions:** the AI looks at the screen **45 times a second** (was 30). The ball search runs its white and red halves side by side (about 21 ms a frame instead of 27, identical results). A block tap no longer pauses it for 30 ms, and log screenshots are saved in the background. Logged frames record their processing time (`frame_ms`).
+- **Camera doesn't spin away from a ball it just had:** when you're targeted and a tracked ball vanishes mid-screen, it waits 0.25 s for it to reappear before searching. In the logs, 11 of 15 targetings where the ball wasn't on screen when it arrived had it in view just before.
 - **Spam block in fast exchanges now triggers only when you're targeted again within 0.9 s** (was 1.2 s): in the logs, those exchanges died 35% of the time against 19% for 0.9–1.2 s. Tested live over 20 rounds it did much worse (20% survived in those exchanges, against 67% without), so leave it off.
 - **Auto** — tick it (or use `--auto`) and the AI plays round after round by itself. It plays while you're in a round, lets go of everything and waits in the lobby after you die or the round ends, and starts again when the next round begins. It recognises the lobby from Blade Ball's green TRADE menu button (`game_state.py`). It's off unless you choose it: the tick box starts unticked every time the panel opens. See [Auto](README.md#auto).
 - **Auto vote** — with Auto on, set it to `Classic` (`--vote classic`) and the AI votes for the Classic gamemode each time it's in the lobby. The default is `None`. It finds the Classic button on the "Vote for the next gamemode" panel and clicks it once per lobby visit; see [Auto vote](README.md#auto-vote).

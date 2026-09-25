@@ -40,6 +40,7 @@ USAGE:
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -227,6 +228,10 @@ def save_config(cfg):
 
 
 def build_masks(hsv, cfg):
+    return build_white_mask(hsv, cfg), build_red_mask(hsv, cfg)
+
+
+def build_white_mask(hsv, cfg):
     white_mask = cv2.inRange(
         hsv,
         (0, 0, cfg["white_val_min"]),
@@ -242,6 +247,10 @@ def build_masks(hsv, cfg):
     if busy > cfg["white_busy_share"]:
         white_mask = cv2.inRange(
             hsv, (0, 0, cfg["white_val_min"]), (180, cfg["white_busy_sat_max"], 255))
+    return white_mask
+
+
+def build_red_mask(hsv, cfg):
     red_low = cv2.inRange(
         hsv,
         (0, cfg["red_sat_min"], cfg["red_val_min"]),
@@ -252,8 +261,14 @@ def build_masks(hsv, cfg):
         (cfg["red_hue_high_min"], cfg["red_sat_min"], cfg["red_val_min"]),
         (180, 255, 255),
     )
-    red_mask = cv2.bitwise_or(red_low, red_high)
-    return white_mask, red_mask
+    return cv2.bitwise_or(red_low, red_high)
+
+
+# The white and red searches below are independent, and OpenCV releases
+# Python's lock while it works, so the red one runs on this thread while
+# the white one runs on the caller's: in live play the search takes ~22ms of
+# a ~27ms frame, and halving it lets the AI look at the screen more often.
+_red_worker = ThreadPoolExecutor(max_workers=1)
 
 
 def find_ball_candidates(frame_bgr, cfg):
@@ -272,9 +287,16 @@ def find_ball_candidates(frame_bgr, cfg):
     must only ever be used to *continue* an existing track (near_track),
     never to pick up a new ball."""
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    white_mask, red_mask = build_masks(hsv, cfg)
+    red = _red_worker.submit(_search, hsv, build_red_mask, "targeting", cfg)
+    white_candidates, white_cores = _search(hsv, build_white_mask, "idle", cfg)
+    red_candidates, red_cores = red.result()
+    return white_candidates + red_candidates, white_cores + red_cores
 
-    h, w = frame_bgr.shape[:2]
+
+def _search(hsv, build_mask, state, cfg):
+    """find_ball_candidates for one color: (candidates, cores)."""
+    mask = build_mask(hsv, cfg)
+    h, w = hsv.shape[:2]
     roi = cfg["self_highlight_roi"]
     own_x0, own_x1 = roi["x0"] * w, roi["x1"] * w
     own_y0, own_y1 = roi["y0"] * h, roi["y1"] * h
@@ -291,40 +313,39 @@ def find_ball_candidates(frame_bgr, cfg):
         return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
     candidates, cores = [], []
-    for mask, state in ((white_mask, "idle"), (red_mask, "targeting")):
-        mask = prepare(mask)
-        failed = []  # blobs that failed the ball checks
-        for c in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
-            blob = _blob(c, mask, cfg)
-            if blob is None:
-                continue
-            if blob["ok"]:
-                if not on_own_character(blob["x"], blob["y"]):
-                    candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
-                continue
-            failed.append(c)
-            core = _round_core(mask, blob["solid"], blob["bx"], blob["by"], blob["area"], cfg)
-            if core is not None and state == "idle" and not _core_is_white(hsv, core, cfg):
-                core = None
-            if core is not None and not on_own_character(core[0], core[1]):
-                cx, cy, radius = core
-                cores.append((cfg["min_circularity"], cx, cy, state, radius))
+    mask = prepare(mask)
+    failed = []  # blobs that failed the ball checks
+    for c in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        blob = _blob(c, mask, cfg)
+        if blob is None:
+            continue
+        if blob["ok"]:
+            if not on_own_character(blob["x"], blob["y"]):
+                candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
+            continue
+        failed.append(c)
+        core = _round_core(mask, blob["solid"], blob["bx"], blob["by"], blob["area"], cfg)
+        if core is not None and state == "idle" and not _core_is_white(hsv, core, cfg):
+            core = None
+        if core is not None and not on_own_character(core[0], core[1]):
+            cx, cy, radius = core
+            cores.append((cfg["min_circularity"], cx, cy, state, radius))
 
-        # A pale, washed-out sky (or anything bright and grey) also passes the
-        # white filter, and a ball in front of it merges into one huge blob
-        # that fails the shape check -- on a map with a hazy sky that hides
-        # the ball entirely. The ball is still clearly *brighter* than such a
-        # background, so look inside failed white blobs again with a stricter
-        # brightness cutoff; normal (unmerged) detection is left as is.
-        if state == "idle" and failed:
-            strict = prepare(cv2.inRange(
-                hsv, (0, 0, cfg["white_split_val_min"]), (180, cfg["white_sat_max"], 255)))
-            for c in cv2.findContours(strict, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
-                blob = _blob(c, strict, cfg)
-                if blob is None or not blob["ok"] or on_own_character(blob["x"], blob["y"]):
-                    continue
-                if any(cv2.pointPolygonTest(f, (blob["x"], blob["y"]), False) >= 0 for f in failed):
-                    candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
+    # A pale, washed-out sky (or anything bright and grey) also passes the
+    # white filter, and a ball in front of it merges into one huge blob
+    # that fails the shape check -- on a map with a hazy sky that hides
+    # the ball entirely. The ball is still clearly *brighter* than such a
+    # background, so look inside failed white blobs again with a stricter
+    # brightness cutoff; normal (unmerged) detection is left as is.
+    if state == "idle" and failed:
+        strict = prepare(cv2.inRange(
+            hsv, (0, 0, cfg["white_split_val_min"]), (180, cfg["white_sat_max"], 255)))
+        for c in cv2.findContours(strict, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+            blob = _blob(c, strict, cfg)
+            if blob is None or not blob["ok"] or on_own_character(blob["x"], blob["y"]):
+                continue
+            if any(cv2.pointPolygonTest(f, (blob["x"], blob["y"]), False) >= 0 for f in failed):
+                candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
 
     return candidates, cores
 

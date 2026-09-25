@@ -52,6 +52,7 @@ import json
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -67,8 +68,12 @@ from features import FeatureTracker
 
 # How often the screen is looked at. At 15 a fast late-round ball moved
 # 100-180px between looks, so blocks landed a frame late. With dxcam capture
-# (~1 ms instead of ~33 ms with mss) a frame costs ~25 ms, so 30 fits.
-FPS = 30
+# (~1 ms instead of ~33 ms with mss) a frame cost ~27 ms, so 30 fit; with
+# the ball search split across two threads (track_ball.py) it's ~21 ms, so
+# 45. In the fastest exchanges the ball is on you ~0.1-0.35s after the
+# "targeted" tint shows, so every ms between it showing and the tap counts.
+# If a frame takes longer, the next one simply starts straight away.
+FPS = 45
 # The recordings the model learned from were made at 15 fps, and its
 # features (velocity, radius growth) are smoothed and differenced per
 # sample -- so the model still sees the ball at that rate, and its last
@@ -315,6 +320,14 @@ CAMERA_SEARCH_TURN_S = 0.12
 # Measured from live frames, a normal-speed turn already goes all the way
 # round in under a second (~430 degrees/s); 1.5x only overshot more.
 CAMERA_SEARCH_SPEED = 1.0
+# ...but not straight away if a tracked ball was in view, well inside the
+# screen, this recently. When the ball turns on you it changes color and
+# speeds up, and often isn't detected for a few frames. In the logs, of 15
+# targetings where the ball wasn't on screen when it arrived (9 deaths), 11
+# had it in view under 0.35s before -- and the camera then spun away from
+# it for most of the targeting. A ball heading off the edge (judged
+# CAMERA_LEAD_S ahead) is searched for at once, toward that side.
+CAMERA_TARGET_GRACE_S = 0.25
 # A ball this small on screen is far away. While it isn't coming for you,
 # it's followed calmly -- no leading, no quick search, no fast sweeps: a
 # far ball bouncing between players on opposite sides swung the camera
@@ -624,6 +637,7 @@ class AIController:
         self.last_feature_t = 0.0
         self.prev_ball = None     # (x, y, radius) of the last trusted detection
         self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
+        self.last_inside_t = -1e9  # last time a steady ball was well inside the view
         self.searching = False    # the camera is sweeping to find a lost ball
         self.last_far = False     # the ball was far away and not after you (CAMERA_FAR_RADIUS)
         self.idle_search_from = None  # when the last idle sweep began (see CAMERA_IDLE_SWEEP_S)
@@ -646,6 +660,7 @@ class AIController:
         self._log_file = open(log_path, "w") if log_path else None
         self._log_frame_idx = 0
         self._log_frames_dir = None
+        self._frame_saver = ThreadPoolExecutor(max_workers=1)  # see log_frame
         if log_path:
             self._log_frames_dir = Path(log_path).parent / (Path(log_path).stem + "_frames")
             self._log_frames_dir.mkdir(parents=True, exist_ok=True)
@@ -723,6 +738,7 @@ class AIController:
         self.screen_vx = self.approach = self.growth = 0.0
         self.idle_search_from = None
         self.searching = False
+        self.last_inside_t = -1e9
         self.features.reset()
         self.last_model = None
 
@@ -828,8 +844,9 @@ class AIController:
         for action in desired & TAP_ACTIONS.keys():
             if now - self.last_tap.get(action, 0) >= (tap_every or TAP_ACTIONS[action]):
                 self.press_action(action)
-                time.sleep(TAP_DOWN_S)
-                self.release_action(action)
+                # Released from a timer, so the loop doesn't stall for it
+                # (the next frame used to come ~35 ms late after every tap).
+                threading.Timer(TAP_DOWN_S, self.release_action, (action,)).start()
                 self.last_tap[action] = now
                 tapped.add(action)
 
@@ -944,6 +961,8 @@ class AIController:
         # real one even when it doesn't look red, and turning away from it
         # was exactly what sent the camera the wrong way in live testing.
         if targeted and not stable:
+            if ball is None and not self.searching and                     now - self.last_inside_t <= CAMERA_TARGET_GRACE_S:
+                return  # just lost it mid-screen: let it reappear (CAMERA_TARGET_GRACE_S)
             self.search(now, CAMERA_SEARCH_SPEED)
             return
         if ball is not None and not stable and self.searching:
@@ -967,6 +986,8 @@ class AIController:
             offset = (predicted_x - width / 2) / (width / 2)  # -1 = left edge, +1 = right edge
             self.last_seen_side = -1 if offset < 0 else 1
             beyond = abs(offset) - CAMERA_EDGE_ZONE
+            if beyond <= 0:
+                self.last_inside_t = now
             if beyond > 0:
                 duration = min(max(beyond * CAMERA_TURN_GAIN_S / (1 - CAMERA_EDGE_ZONE),
                                    CAMERA_MIN_TURN_S), CAMERA_MAX_TURN_S)
@@ -997,11 +1018,13 @@ class AIController:
         }
         return desired, proba
 
-    def log_frame(self, t, frame_bgr, ball, row, proba, desired, tapped):
+    def log_frame(self, t, frame_bgr, ball, row, proba, desired, tapped, frame_ms):
         frame_name = None
         if self._log_frames_dir is not None and self.frame_count % LOG_FRAME_EVERY == 0:
             frame_name = f"{self._log_frame_idx:06d}.jpg"
-            cv2.imwrite(str(self._log_frames_dir / frame_name), frame_bgr)
+            # Saving a full-screen JPEG takes ~10 ms: done in the background
+            # so it doesn't delay the next look at the screen.
+            self._frame_saver.submit(cv2.imwrite, str(self._log_frames_dir / frame_name), frame_bgr)
             self._log_frame_idx += 1
         x, y, state, _ = ball if ball is not None else (None, None, None, None)
         entry = {
@@ -1017,6 +1040,7 @@ class AIController:
             "growth": round(self.growth, 1),
             "track_len": self.track_len,
             "self_red": round(self.self_red, 4),
+            "frame_ms": round(frame_ms, 1),  # screen grab to actions sent
         }
         self._log_file.write(json.dumps(entry) + "\n")
         self._log_file.flush()
@@ -1150,7 +1174,8 @@ class AIController:
                     self.steer_camera(ball, width, capture_t, targeted)
 
                 if self._log_file is not None:
-                    self.log_frame(capture_t, frame_bgr, ball, row, proba, desired, tapped)
+                    self.log_frame(capture_t, frame_bgr, ball, row, proba, desired, tapped,
+                                   1000 * (time.time() - capture_t))
 
             elapsed = time.time() - start
             time.sleep(max(0.0, interval - elapsed))
