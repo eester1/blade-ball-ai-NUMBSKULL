@@ -119,6 +119,9 @@ def score(path, cfg):
         "taps": len(taps),
         "wasted_taps": sum(id(e) not in counted_taps for e in taps),
         "block_3d_dist": settings.get("block_3d_dist"),
+        "options": [name for key, name in (("spam_block", "spam block in fast exchanges"),
+                                           ("hold_hover", "hold while the ball hovers"))
+                    if settings.get(key)],
     }
 
 
@@ -133,7 +136,8 @@ def summarize(results):
 def print_report(res):
     print(f"\n=== {res['path']} ===")
     if res["block_3d_dist"] is not None:
-        print(f"block timing: taps within {res['block_3d_dist']} ball radii (3D)")
+        print(f"block timing: taps within {res['block_3d_dist']} ball radii (3D)"
+              + (" | " + ", ".join(res["options"]) if res["options"] else ""))
     print(f"length {res['duration']:.0f}s | ball detected in {100 * res['ball_seen']:.0f}% "
           f"of frames | {res['taps']} block taps, {res['wasted_taps']} while not targeted")
     if not res["episodes"]:

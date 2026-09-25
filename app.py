@@ -209,6 +209,14 @@ class App:
         self.learned_block = tk.BooleanVar(value=saved.get("learned_block", False))
         ttk.Checkbutton(play, text="Learned block timing", variable=self.learned_block).grid(
             row=1, column=3, sticky="w", pady=(4, 0))
+        # Experimental block options, to compare with and without (each run's
+        # log records which were on).
+        self.spam_block = tk.BooleanVar(value=saved.get("spam_block", False))
+        ttk.Checkbutton(play, text="Spam block in fast exchanges", variable=self.spam_block).grid(
+            row=5, column=0, columnspan=2, sticky="w")
+        self.hold_hover = tk.BooleanVar(value=saved.get("hold_hover", False))
+        ttk.Checkbutton(play, text="Hold block while the ball hovers", variable=self.hold_hover).grid(
+            row=5, column=2, columnspan=2, sticky="w")
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
         self.stop_key = tk.StringVar(value=saved.get("stop_key", "End"))
         if self.stop_key.get() not in STOP_KEYS:
@@ -362,7 +370,8 @@ class App:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
                 "stop_key": self.stop_key.get(), "learned_block": self.learned_block.get(),
-                "rounds_total": self.rounds_total},
+                "rounds_total": self.rounds_total, "spam_block": self.spam_block.get(),
+                "hold_hover": self.hold_hover.get()},
                 indent=2))
         except OSError:
             pass  # not worth failing a start over
@@ -419,6 +428,10 @@ class App:
                 argv += ["--vote", VOTE_MODES[self.vote.get()]]
         if self.learned_block.get():
             argv.append("--learned-block")
+        if self.spam_block.get():
+            argv.append("--spam-block")
+        if self.hold_hover.get():
+            argv.append("--hold-hover")
         self.proc_quit_key = getattr(keyboard.Key, quit_key)
         self.run("AI running." if self.auto.get() else
                  "AI loaded -- press Insert in Roblox to turn it on.",

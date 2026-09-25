@@ -111,6 +111,29 @@ MOUSE_ACTIONS = {"block": mouse.Button.left}
 TAP_ACTIONS = {"block": 0.35}
 TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 
+# Spam block in fast exchanges (--spam-block, off by default): when you're
+# targeted again within SPAM_EXCHANGE_GAP_S of the last time -- the ball
+# bouncing back and forth between you and someone close -- tap block every
+# SPAM_TAP_S for as long as you're targeted, like players spam click. The
+# normal rules tapped once, ~0.17s before the hit, in both the fast
+# exchanges that survived and those that died (71% survived vs 82% for
+# normal targetings), so timing alone couldn't fix them.
+SPAM_EXCHANGE_GAP_S = 1.2
+SPAM_TAP_S = 0.1
+
+# Hold block while the ball hovers (--hold-hover, off by default): while a
+# red ball coming at you is barely growing on screen and barely closing in,
+# don't tap yet. Slow early-game balls hang near you: in 67% of slow-ball
+# deaths the first tap came over a second before the hit (12% in the slow
+# balls survived) -- the block was spent early. Early taps were made with
+# the ball growing ~5px/s and closing ~80px/s (medians), well-timed ones
+# ~11 and ~166 -- but the two overlap, so this can delay some good taps;
+# it's an option to measure, not a proven fix. A huge ball
+# (BLOCK_HUGE_RADIUS) is always blocked.
+HOVER_MAX_GROWTH = 3.0      # px/s
+HOVER_MAX_APPROACH = 50.0   # px/s
+HOVER_MOTION_FRESH_S = 0.2  # growth/approach must have been measured this recently
+
 # Blocking is gated on the ball being close, because timing is what the
 # model gets wrong in both directions: it tapped with the ball ~1.1s away
 # (block used up, then died), and right at contact it often *doesn't* want
@@ -513,7 +536,8 @@ class Camera:
 
 class AIController:
     def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None,
-                 use_classifier=True, auto=False, quit_key=DEFAULT_QUIT_KEY, vote=None):
+                 use_classifier=True, auto=False, quit_key=DEFAULT_QUIT_KEY, vote=None,
+                 spam_block=False, hold_hover=False):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
@@ -556,6 +580,11 @@ class AIController:
         self.last_lobby_frame_t = 0.0
         self.phase = None          # "playing", "lobby", "no_focus" or None (not yet known)
         self.rounds_played = 0     # Auto: rounds started this run (see set_phase)
+        self.spam_block = spam_block  # see SPAM_*
+        self.hold_hover = hold_hover  # see HOVER_*
+        self.was_targeted = False
+        self.targeted_until = -1e9    # when you were last targeted
+        self.fast_exchange = False    # this targeting came right after the last one
         self.new_round = True      # the next "playing" is a new round (not a return from alt-tab)
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
@@ -620,6 +649,23 @@ class AIController:
             self.release_all()
             print("[quitting]")
             return False
+
+    def update_exchange(self, targeted, t):
+        """Track whether this targeting is part of a fast exchange."""
+        if targeted and not self.was_targeted:
+            self.fast_exchange = t - self.targeted_until < SPAM_EXCHANGE_GAP_S
+        if targeted:
+            self.targeted_until = t
+        self.was_targeted = targeted
+
+    def spamming(self, targeted):
+        return self.spam_block and targeted and self.fast_exchange
+
+    def hovering(self, ball, targeted, t):
+        """--hold-hover: a red ball coming at you that's barely moving in."""
+        return (self.hold_hover and targeted and ball[2] == "targeting"
+                and ball[3] < BLOCK_HUGE_RADIUS and t - self.motion_t <= HOVER_MOTION_FRESH_S
+                and self.growth < HOVER_MAX_GROWTH and self.approach < HOVER_MAX_APPROACH)
 
     def reset_tracking(self):
         """Forget the ball -- after a pause or between rounds it's stale."""
@@ -729,13 +775,14 @@ class AIController:
         self.currently_held = set()
         self.camera.stop()
 
-    def apply_actions(self, desired):
+    def apply_actions(self, desired, tap_every=None):
         """Holds/releases held actions to match `desired`, and taps any tap
-        action in it that's due. Returns the set of actions tapped."""
+        action in it that's due (every TAP_ACTIONS seconds, or `tap_every`
+        when given). Returns the set of actions tapped."""
         now = time.time()
         tapped = set()
         for action in desired & TAP_ACTIONS.keys():
-            if now - self.last_tap.get(action, 0) >= TAP_ACTIONS[action]:
+            if now - self.last_tap.get(action, 0) >= (tap_every or TAP_ACTIONS[action]):
                 self.press_action(action)
                 time.sleep(TAP_DOWN_S)
                 self.release_action(action)
@@ -942,7 +989,8 @@ class AIController:
         # (e.g. learned vs built-in block timing).
         self.log_event(time.time(), "settings", block_3d_dist=BLOCK_3D_DIST,
                        auto=self.lobby is not None, vote=self.vote_mode, fps=FPS,
-                       capture=self.screen.method)
+                       capture=self.screen.method, spam_block=self.spam_block,
+                       hold_hover=self.hold_hover)
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
         self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
@@ -999,6 +1047,7 @@ class AIController:
                         and ball is not None and ball[2] == "targeting":
                     self.self_red = self.targeted_at[1]
                 targeted = self.self_red >= self.cfg["self_target_threshold"]
+                self.update_exchange(targeted, capture_t)
                 row = proba = None
                 desired = tapped = set()
 
@@ -1009,6 +1058,9 @@ class AIController:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
+                    if self.spamming(targeted):
+                        # In a fast exchange the ball is often too quick to see.
+                        tapped = self.apply_actions({"block"}, tap_every=SPAM_TAP_S)
                     self.steer_camera(None, width, capture_t, targeted)
                 else:
                     self.missing_streak = 0
@@ -1036,12 +1088,17 @@ class AIController:
                         row, desired, proba = self.last_model  # see MODEL_INTERVAL_S
                     self.measure_motion(ball, capture_t, character_xy, targeted)
 
-                    if should_block("block" in desired, ball, targeted, character_xy,
-                                    self.approach, self.growth, height):
+                    spam = self.spamming(targeted)
+                    if spam:
+                        desired = desired | {"block"}
+                    elif self.hovering(ball, targeted, capture_t):
+                        desired = desired - {"block"}
+                    elif should_block("block" in desired, ball, targeted, character_xy,
+                                      self.approach, self.growth, height):
                         desired = desired | {"block"}
                     else:
                         desired = desired - {"block"}
-                    tapped = self.apply_actions(desired)
+                    tapped = self.apply_actions(desired, tap_every=SPAM_TAP_S if spam else None)
                     self.steer_camera(ball, width, capture_t, targeted)
 
                 if self._log_file is not None:
@@ -1090,6 +1147,12 @@ def main():
                              "Insert toggles)")
     parser.add_argument("--vote", choices=["none", *game_state.VOTE_MODES], default="none",
                         help="With --auto: vote for this gamemode each time in the lobby")
+    parser.add_argument("--spam-block", action="store_true",
+                        help="In fast exchanges (targeted again within 1.2s), tap block every "
+                             "0.1s while targeted")
+    parser.add_argument("--hold-hover", action="store_true",
+                        help="Don't tap block while a red ball coming at you is barely moving "
+                             "in (slow early-game balls)")
     parser.add_argument("--learned-block", action="store_true",
                         help="Use the block timing learned from your own logged runs "
                              "(learned_block.json, made by learn_block.py) instead of the "
@@ -1119,7 +1182,12 @@ def main():
     controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
                               use_classifier=not args.no_classifier, auto=args.auto,
                               quit_key=args.quit_key,
-                              vote=None if args.vote == "none" else args.vote)
+                              vote=None if args.vote == "none" else args.vote,
+                              spam_block=args.spam_block, hold_hover=args.hold_hover)
+    if args.spam_block or args.hold_hover:
+        print("Block options: " + ", ".join(
+            name for name, on in (("spam in fast exchanges", args.spam_block),
+                                  ("hold while the ball hovers", args.hold_hover)) if on))
     print("Ball classifier: " + ("on" if controller.scorer else
                                  "off" if args.no_classifier else "not trained yet (off)"))
     if args.log:

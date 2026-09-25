@@ -147,6 +147,7 @@ This opens a window with a button for everything, so you never have to type the 
   - **Auto** (unticked every time the panel opens) — tick it and the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Left unticked, you switch the AI on and off yourself with Insert.
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. The panel remembers it. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
+  - **Spam block in fast exchanges** and **Hold block while the ball hovers** — experimental block options, both off by default and remembered. See [Experimental block options](#experimental-block-options).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -472,6 +473,44 @@ Blocking while the ball is still a bit farther out works much better, and the fa
 - **How the distance is chosen:** the block fires as soon as the ball comes within the learned distance, so the tap lands just inside it. It picks the closest distance for which taps in the 15 radii just inside it survived at least 90% of the time, with at least 15 taps there. That way blocks come as early as needed and no earlier.
 - **By hand:** `python learn_block.py` does the same as the button, and `python learn_block.py --dry-run` prints what it would learn without saving.
 - **Comparing:** play some logged runs with it ticked and some unticked, and **Score** them (**Score all runs** gives a total). Survival per targeting with the built-in rules was about 75–85% in recent runs.
+
+## Experimental block options
+
+Two tick boxes in the panel's Play section. Both are **off by default**, and meant to be **compared with and without**. Every run's log records which options it used, and **Score latest run** shows them, so logged Auto runs with and without can be compared.
+
+Why they exist: sorting every logged targeting by situation showed where the AI dies most.
+
+| Situation | Survived |
+|---|---|
+| **Slow ball** (you're targeted for 1.8 s or longer: early game) | 67% |
+| Normal | 82% |
+| **Fast exchange** (targeted again within 1.2 s of the last time: the ball bouncing between you and someone close) | 71% |
+
+### Spam block in fast exchanges (`--spam-block`)
+
+When you're targeted again within **1.2 s** of the last time, it taps block **every 0.1 s for as long as you're targeted**, like players spam click in a close exchange. That goes on even if the ball is moving too fast to be seen. Normally it taps at most every 0.35 s, and only once the ball counts as close.
+
+The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
+
+### Hold block while the ball hovers (`--hold-hover`)
+
+While a red ball coming at you is **barely growing on screen (under 3 px/s) and barely closing in (under 50 px/s)**, it doesn't tap yet. A huge ball, right on top of you, is always blocked.
+
+Slow early-game balls tend to hang near you before they arrive, and the AI was blocking too early for them:
+
+| Slow balls | First tap before the hit (median) | First tap over 1 s early |
+|---|---|---|
+| Survived | 0.37 s | 12% |
+| **Died** | **1.29 s** | **67%** |
+
+An early tap spends the block, and when the ball finally arrives it fails. Timing blocks by the ball's estimated arrival time didn't help. At those early taps the estimate also thought the ball was about to hit, because it hovers rather than flying straight in.
+
+**Honest expectations:** on the logged taps, this option would have held back **29%** of the too-early taps, but also delayed **13%** of well-timed taps. A delayed tap isn't necessarily a missed one: it taps as soon as the ball starts moving in. It's a trade-off to measure, not a proven fix.
+
+### Comparing
+
+1. Play logged Auto runs with an option ticked, then some with it unticked. Keep **Save a log of this run** on, and try one option at a time if you can.
+2. **Score all runs**. Each run shows its settings, so the rounds with and without can be compared. Slow balls and fast exchanges are where a difference should show.
 
 ## Camera control
 
