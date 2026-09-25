@@ -147,7 +147,7 @@ This opens a window with a button for everything, so you never have to type the 
   - **Auto** (unticked every time the panel opens) — tick it and the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Left unticked, you switch the AI on and off yourself with Insert.
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. It starts **unticked** every time the panel opens. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
-  - **Spam block in fast exchanges** and **Hold block while the ball hovers** — experimental block options, both off by default and remembered. See [Experimental block options](#experimental-block-options).
+  - **Spam block in fast exchanges** (off by default) and **Hold block while the ball hovers** (**on** by default, since it proved itself in live runs) — block options, both remembered. See [Experimental block options](#experimental-block-options).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -476,7 +476,7 @@ Blocking while the ball is still a bit farther out works much better, and the fa
 
 ## Experimental block options
 
-Two tick boxes in the panel's Play section. Both are **off by default**, and meant to be **compared with and without**. Every run's log records which options it used, and **Score latest run** shows them, so logged Auto runs with and without can be compared.
+Two tick boxes in the panel's Play section. **Hold block while the ball hovers is on by default** (see the results below), and **Spam block is off**. Both can be switched either way and compared. Every run's log records which options it used, and **Score latest run** shows them, so logged Auto runs with and without can be compared.
 
 Why they exist: sorting every logged targeting by situation showed where the AI dies most.
 
@@ -507,7 +507,19 @@ Slow early-game balls tend to hang near you before they arrive, and the AI was b
 
 An early tap spends the block, and when the ball finally arrives it fails. Timing blocks by the ball's estimated arrival time didn't help. At those early taps the estimate also thought the ball was about to hit, because it hovers rather than flying straight in.
 
-**Honest expectations:** on the logged taps, this option would have held back **29%** of the too-early taps, but also delayed **13%** of well-timed taps. A delayed tap isn't necessarily a missed one: it taps as soon as the ball starts moving in. It's a trade-off to measure, not a proven fix.
+**Live results:** over 16 rounds with it on, compared with all earlier Auto runs:
+
+| | Targetings | Survived | First tap over 1 s early |
+|---|---|---|---|
+| Hold off | 316 | 77% | slow balls 28% |
+| **Hold on** | 103 | **84%** | slow balls 20% |
+| Slow balls, off → on | 47 → 15 | **68% → 87%** | |
+| Normal, off → on | 176 → 71 | 82% → 87% | |
+| Fast exchanges, off → on | 93 → 17 | 71% → 71% | |
+
+So it's now **on by default** in the panel. Fast exchanges are unchanged, and are now the weakest situation.
+
+**Before it was tried:** on the logged taps, this option would have held back **29%** of the too-early taps, but also delayed **13%** of well-timed taps. A delayed tap isn't necessarily a missed one: it taps as soon as the ball starts moving in. It's a trade-off to measure, not a proven fix.
 
 ### Comparing
 

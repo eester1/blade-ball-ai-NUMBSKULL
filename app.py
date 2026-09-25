@@ -215,7 +215,7 @@ class App:
         self.spam_block = tk.BooleanVar(value=saved.get("spam_block", False))
         ttk.Checkbutton(play, text="Spam block in fast exchanges", variable=self.spam_block).grid(
             row=5, column=0, columnspan=2, sticky="w")
-        self.hold_hover = tk.BooleanVar(value=saved.get("hold_hover", False))
+        self.hold_hover = tk.BooleanVar(value=saved.get("hold_hover", True))  # on unless unticked
         ttk.Checkbutton(play, text="Hold block while the ball hovers", variable=self.hold_hover).grid(
             row=5, column=2, columnspan=2, sticky="w")
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
