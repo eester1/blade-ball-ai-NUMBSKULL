@@ -242,9 +242,10 @@ CAMERA_MIN_TURN_S = 0.04
 CAMERA_MAX_TURN_S = 0.15
 # Searching turns toward the side the ball was last seen on, in steps of this.
 CAMERA_SEARCH_TURN_S = 0.12
-# Mouse mode: sweep this much faster than normal turns while searching --
-# while you're targeted, every frame spent looking is a frame less to block.
-CAMERA_SEARCH_SPEED = 1.5
+# Mouse mode: search speed while you're targeted, relative to normal turns.
+# Measured from live frames, a normal-speed turn already goes all the way
+# round in under a second (~430 degrees/s); 1.5x only overshot more.
+CAMERA_SEARCH_SPEED = 1.0
 # A ball this small on screen is far away. While it isn't coming for you,
 # it's followed calmly -- no leading, no quick search, no fast sweeps: a
 # far ball bouncing between players on opposite sides swung the camera
@@ -265,8 +266,13 @@ CAMERA_FAR_RADIUS = 10
 # turns on you, your red highlight starts the (unlimited, faster) targeted
 # search anyway.
 CAMERA_IDLE_SEARCH_AFTER_S = 1.0
-CAMERA_IDLE_SWEEP_S = 1.5
-CAMERA_IDLE_SWEEP_EVERY_S = 6.0
+CAMERA_IDLE_SWEEP_S = 2.5
+CAMERA_IDLE_SWEEP_EVERY_S = 7.0
+# ...turning at this fraction of normal speed: ~150 degrees/s, one full turn
+# in ~2.5s. At full speed (~430 degrees/s) the ball was on screen for only
+# a few frames per turn -- too few to be recognized -- and a 1.5s sweep
+# spun past it about twice.
+CAMERA_IDLE_SWEEP_SPEED = 0.35
 # Drag speed in "mouse" mode, in mouse counts per second.
 CAMERA_MOUSE_SPEED = 900
 # Mouse mode: once the dragged cursor is this many pixels from the anchor,
@@ -725,9 +731,8 @@ class AIController:
 
     # --- camera --------------------------------------------------------
 
-    def search(self, now, fast):
-        self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now,
-                         CAMERA_SEARCH_SPEED if fast else 1.0)
+    def search(self, now, speed):
+        self.camera.turn(self.last_seen_side, CAMERA_SEARCH_TURN_S, now, speed)
         self.searching = True
 
     def steer_camera(self, ball, width, now, targeted):
@@ -744,8 +749,14 @@ class AIController:
         # real one even when it doesn't look red, and turning away from it
         # was exactly what sent the camera the wrong way in live testing.
         if targeted and not stable:
-            self.search(now, fast=True)
+            self.search(now, CAMERA_SEARCH_SPEED)
             return
+        if ball is not None and not stable and self.searching:
+            # Something ball-like came into view mid-sweep: hold still so it
+            # can be followed for long enough to count. If it was nothing,
+            # the sweep picks up again when it's gone.
+            self.camera.stop()
+            self.searching = False
         if stable:
             # Found it: stop sweeping at once. A sweep left running after the
             # ball came back into view swung it right across the screen and
@@ -768,11 +779,11 @@ class AIController:
         elif ball is None:
             last = self.idle_search_from  # when the last idle sweep began
             if last is not None and now - last <= CAMERA_IDLE_SWEEP_S:
-                self.search(now, fast=False)  # keep sweeping
+                self.search(now, CAMERA_IDLE_SWEEP_SPEED)  # keep sweeping
             elif self.missing_streak >= CAMERA_IDLE_SEARCH_AFTER_S * FPS and \
                     (last is None or now - last >= CAMERA_IDLE_SWEEP_EVERY_S):
                 self.idle_search_from = now
-                self.search(now, fast=False)
+                self.search(now, CAMERA_IDLE_SWEEP_SPEED)
         # else: a detection that just jumped here -- often a decoy (a sparkle,
         # a lantern, another player's cosmetic), so don't swing the camera
         # toward it until it's held up for a few frames.
