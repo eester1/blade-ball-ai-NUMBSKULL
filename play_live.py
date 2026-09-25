@@ -118,7 +118,10 @@ TAP_DOWN_S = 0.03  # how long a tap holds the button, so the game registers it
 # normal rules tapped once, ~0.17s before the hit, in both the fast
 # exchanges that survived and those that died (71% survived vs 82% for
 # normal targetings), so timing alone couldn't fix them.
-SPAM_EXCHANGE_GAP_S = 1.2
+# Narrowed from 1.2s after the first spam runs did worse: over 155 logged
+# fast exchanges, 35% died when targeted again within 0.9s vs 19% at
+# 0.9-1.2s, so spam only in the really fast ones.
+SPAM_EXCHANGE_GAP_S = 0.9
 SPAM_TAP_S = 0.1
 # ...and keep spamming between hits: in a really fast exchange your
 # "targeted" tint shows only ~0.1s before the ball is back (two of three
@@ -1193,7 +1196,7 @@ def main():
     parser.add_argument("--vote", choices=["none", *game_state.VOTE_MODES], default="none",
                         help="With --auto: vote for this gamemode each time in the lobby")
     parser.add_argument("--spam-block", action="store_true",
-                        help="In fast exchanges (targeted again within 1.2s), tap block every "
+                        help="In fast exchanges (targeted again within 0.9s), tap block every "
                              "0.1s while targeted")
     parser.add_argument("--hold-hover", action="store_true",
                         help="Don't tap block while a red ball coming at you is barely moving "

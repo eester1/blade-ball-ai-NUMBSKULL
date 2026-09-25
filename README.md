@@ -488,9 +488,11 @@ Why they exist: sorting every logged targeting by situation showed where the AI 
 
 ### Spam block in fast exchanges (`--spam-block`)
 
-When you're targeted again within **1.2 s** of the last time, it taps block **every 0.1 s for as long as you're targeted**, like players spam click in a close exchange. That goes on even if the ball is moving too fast to be seen. Normally it taps at most every 0.35 s, and only once the ball counts as close.
+When you're targeted again within **0.9 s** of the last time, it taps block **every 0.1 s for as long as you're targeted**, like players spam click in a close exchange. That goes on even if the ball is moving too fast to be seen. Normally it taps at most every 0.35 s, and only once the ball counts as close.
 
-It also **keeps spamming between hits**. For up to 1.2 s after a targeting ends, it goes on tapping while the ball stays close (within a 3D distance of 40), and for 0.4 s after the ball was last seen that close, since mid-exchange it's often too fast to see. In the first spam runs, the targeted tint showed only about 0.1 s before the ball was back, too late to start spamming then.
+It also **keeps spamming between hits**. For up to 0.9 s after a targeting ends, it goes on tapping while the ball stays close (within a 3D distance of 40), and for 0.4 s after the ball was last seen that close, since mid-exchange it's often too fast to see. In the first spam runs, the targeted tint showed only about 0.1 s before the ball was back, too late to start spamming then.
+
+**Narrowed to 0.9 s:** it first triggered within 1.2 s, and those runs did worse. Over 155 logged fast exchanges, **35%** died when targeted again within 0.9 s, against **19%** at 0.9–1.2 s. So it now spams only in the really fast exchanges, where the normal rules lose most.
 
 The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
 
