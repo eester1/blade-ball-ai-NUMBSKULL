@@ -21,6 +21,8 @@
 
 - **Auto vote clicked the wrong button** — the click moved the cursor in a way Roblox doesn't see, so votes landed on whichever button the cursor was already over (usually the middle one), or nowhere. It now sends real Windows mouse input, and only counts the vote once the game shows its tick on Classic, retrying up to 3 times.
 
+- **Lava counted as "you're targeted"** — on a lava map, the bright red lava next to your character passed the targeted check, faking targetings the AI then searched for and never blocked. Only the darker red of the real tint counts now (brightness at most 180): lava false alarms drop from about 0.12 to 0.02, while real targetings barely change. On a replay of that run, the "no tap" targetings go from 6 to 3.
+
 ### Docs
 
 - New README section, [Camera zoom](README.md#camera-zoom-keep-it-the-same-every-time): zoom changes how big everything looks to the AI, so it has to stay the same every time (12 notches out from first person here). Zooming out further breaks the "you're targeted" check.

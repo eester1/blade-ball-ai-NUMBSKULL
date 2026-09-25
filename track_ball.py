@@ -190,6 +190,11 @@ DEFAULT_CONFIG = {
     "self_highlight_hue_min": 170,
     "self_highlight_sat_min": 120,
     "self_highlight_val_min": 110,
+    # ...and not too bright: red lava (brightness ~230) next to your character
+    # read as targeted (0.12, up to 0.32) and faked a run of "no tap"
+    # targetings. The real tint is a darker red (~125-135). Capping at 180
+    # drops lava to ~0.02 while real targetings barely change (0.24 -> 0.23).
+    "self_highlight_val_max": 180,
     # Score above which you count as targeted. Real highlights scored
     # 0.15-0.36 in live logs; orange dirt and a highlighted neighbor, <= 0.03.
     # While targeted, a red ball on screen is trusted immediately rather than
@@ -403,7 +408,7 @@ def self_highlight_score(frame_bgr, cfg):
     mask = cv2.inRange(
         hsv,
         (cfg["self_highlight_hue_min"], cfg["self_highlight_sat_min"], cfg["self_highlight_val_min"]),
-        (180, 255, 255),
+        (180, 255, cfg["self_highlight_val_max"]),
     )
     return float(mask.mean() / 255)
 
