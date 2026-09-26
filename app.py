@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -27,6 +28,10 @@ from tkinter.scrolledtext import ScrolledText
 from pynput import keyboard
 
 HERE = Path(__file__).resolve().parent
+AI_NAME = "NUMBSKULL"
+VERSION = "0.2.0"
+AUTHOR = "eester1"
+REPO_URL = "https://github.com/eester1/blade-ball-ai-NUMBSKULL"
 PYTHON = sys.executable
 # Opened by double-clicking "Blade Ball AI.bat", the panel runs on
 # pythonw.exe (no console window). The scripts it starts use python.exe from
@@ -160,7 +165,7 @@ def sessions_needing_tracking(retrack_all):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Blade Ball AI")
+        root.title(f"{AI_NAME} v{VERSION} -- Blade Ball AI")
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.output = queue.Queue()
@@ -282,6 +287,16 @@ class App:
         # Says why the other buttons are greyed out while something runs.
         self.hint = tk.StringVar(value="")
         tk.Label(main, textvariable=self.hint, fg="#c05800", anchor="w").pack(fill="x", padx=8)
+
+        # --- Credits (packed before the output box so it stays visible) ------
+        credits = ttk.Frame(main)
+        credits.pack(side="bottom", fill="x", padx=8, pady=(4, 0))
+        tk.Label(credits, text=f"{AI_NAME}  v{VERSION}", font=("Segoe UI", 10, "bold")).pack(side="left")
+        tk.Label(credits, text=f"   made by {AUTHOR}   ", fg="#555555").pack(side="left")
+        link = tk.Label(credits, text=REPO_URL, fg="#1a5fb4", cursor="hand2",
+                        font=("Segoe UI", 9, "underline"))
+        link.pack(side="left")
+        link.bind("<Button-1>", lambda _: webbrowser.open(REPO_URL))
 
         self.text = ScrolledText(main, height=18, width=100, font=("Consolas", 9))
         self.text.pack(fill="both", expand=True, **pad)

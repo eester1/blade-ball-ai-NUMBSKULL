@@ -1,4 +1,4 @@
-# Blade Ball AI
+# NUMBSKULL — a Blade Ball AI
 
 An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox). It watches your screen, learns from recordings of you playing, and can then play (dodge/block) on its own by mimicking what you did in similar situations.
 
@@ -741,3 +741,7 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
 - **Sensitive to camera zoom.** Detection, block timing and the targeted check are all measured in screen pixels, so the zoom has to stay the same (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play. That includes the window mode: record and play either windowed or fullscreen, not a mix. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)
+
+## Credits
+
+**NUMBSKULL** was made by **[eester1](https://github.com/eester1)**. The panel shows its name, version and a link back to this repository at the bottom.
