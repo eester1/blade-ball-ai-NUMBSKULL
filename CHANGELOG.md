@@ -4,6 +4,7 @@
 
 ### New
 
+- **Faster in standoffs:** while the ball is tracked, only a window around it is searched (about 1 ms instead of 18), with a whole-screen search every third frame and whenever the window finds nothing. The AI now looks up to 60 times a second.
 - **Finds the ball on pale maps:** on a pale sky-and-sand map the white ball merged into the equally bright background and wasn't recognized. White blobs that fail the shape check are now also split by colourlessness (the ball has almost no tint, the background a little). On that map it found the ball in 20% of the frames it had missed.
 - **Balanced sidestepping:** it leaned one way (A 3–8× as much as D) and walked off to the side of the map. Now when it has strafed one way 1 s more than the other over the last 3 s, it steps the other way for 0.5 s. See [Balanced sidestepping](README.md#balanced-sidestepping).
 - **Faster reactions:** the AI looks at the screen **45 times a second** (was 30). The ball search runs its white and red halves side by side (about 21 ms a frame instead of 27, identical results). A block tap no longer pauses it for 30 ms, and log screenshots are saved in the background. Logged frames record their processing time (`frame_ms`).

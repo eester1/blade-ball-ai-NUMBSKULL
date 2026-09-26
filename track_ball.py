@@ -213,12 +213,17 @@ DEFAULT_CONFIG = {
 }
 
 
-def apply_ui_mask(mask, cfg):
-    h, w = mask.shape[:2]
+def apply_ui_mask(mask, cfg, origin=(0, 0), full_size=None):
+    """origin/full_size: when mask is a window cut from a bigger frame, its
+    top-left corner in the frame and the frame's (h, w) -- the regions are
+    fractions of the whole frame."""
+    h, w = full_size or mask.shape[:2]
+    ox, oy = origin
     for r in cfg.get("ui_mask_regions", []):
-        x0, y0 = int(r["x0"] * w), int(r["y0"] * h)
-        x1, y1 = int(r["x1"] * w), int(r["y1"] * h)
-        mask[y0:y1, x0:x1] = 0
+        x0, y0 = max(int(r["x0"] * w) - ox, 0), max(int(r["y0"] * h) - oy, 0)
+        x1, y1 = int(r["x1"] * w) - ox, int(r["y1"] * h) - oy
+        if x1 > 0 and y1 > 0:
+            mask[y0:y1, x0:x1] = 0
     return mask
 
 
@@ -237,7 +242,13 @@ def build_masks(hsv, cfg):
     return build_white_mask(hsv, cfg), build_red_mask(hsv, cfg)
 
 
-def build_white_mask(hsv, cfg):
+_last_busy = False  # whether the last whole-frame search found the screen "busy"
+
+
+def build_white_mask(hsv, cfg, busy=None):
+    """busy: whether to use the busy-screen filter (below); None = measure
+    it on this frame (which must then be the whole frame)."""
+    global _last_busy
     white_mask = cv2.inRange(
         hsv,
         (0, 0, cfg["white_val_min"]),
@@ -248,15 +259,17 @@ def build_white_mask(hsv, cfg):
     # ~2%), which buries the white ball and makes decoys. When that much
     # passes, only accept nearly colorless pixels: sand is warm-tinted
     # (saturation ~52), the ball barely (<= 18 for 95% of balls).
-    h, w = white_mask.shape
-    busy = white_mask[int(0.1 * h):int(0.9 * h), int(0.2 * w):].mean() / 255
-    if busy > cfg["white_busy_share"]:
+    if busy is None:
+        h, w = white_mask.shape
+        share = white_mask[int(0.1 * h):int(0.9 * h), int(0.2 * w):].mean() / 255
+        busy = _last_busy = share > cfg["white_busy_share"]
+    if busy:
         white_mask = cv2.inRange(
             hsv, (0, 0, cfg["white_val_min"]), (180, cfg["white_busy_sat_max"], 255))
     return white_mask
 
 
-def build_red_mask(hsv, cfg):
+def build_red_mask(hsv, cfg, busy=None):
     red_low = cv2.inRange(
         hsv,
         (0, cfg["red_sat_min"], cfg["red_val_min"]),
@@ -277,7 +290,7 @@ def build_red_mask(hsv, cfg):
 _red_worker = ThreadPoolExecutor(max_workers=1)
 
 
-def find_ball_candidates(frame_bgr, cfg):
+def find_ball_candidates(frame_bgr, cfg, window=None):
     """Returns (candidates, cores). candidates are every ball-colored/shaped
     blob in the frame, as (circularity, x, y, state, radius) -- not just the
     single best one; radius is the apparent size in pixels, which grows as
@@ -291,21 +304,37 @@ def find_ball_candidates(frame_bgr, cfg):
     (a close ball merged with its trail -- see core_* config), same format.
     Sky patches and glowing effects can yield convincing cores too, so they
     must only ever be used to *continue* an existing track (near_track),
-    never to pick up a new ball."""
+    never to pick up a new ball.
+
+    window: (x0, y0, x1, y1) to search only that part of the frame (live
+    play, around where the ball just was -- much faster); positions are
+    still returned in whole-frame pixels. It uses whether the last
+    whole-frame search found the screen busy (build_white_mask)."""
+    full_size = frame_bgr.shape[:2]
+    origin = (0, 0)
+    busy = None
+    if window is not None:
+        x0, y0, x1, y1 = window
+        frame_bgr = frame_bgr[y0:y1, x0:x1]
+        origin, busy = (x0, y0), _last_busy
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    red = _red_worker.submit(_search, hsv, build_red_mask, "targeting", cfg)
-    white_candidates, white_cores = _search(hsv, build_white_mask, "idle", cfg)
+    red = _red_worker.submit(_search, hsv, build_red_mask, "targeting", cfg,
+                             origin, full_size, busy)
+    white_candidates, white_cores = _search(hsv, build_white_mask, "idle", cfg,
+                                            origin, full_size, busy)
     red_candidates, red_cores = red.result()
     return white_candidates + red_candidates, white_cores + red_cores
 
 
-def _search(hsv, build_mask, state, cfg):
-    """find_ball_candidates for one color: (candidates, cores)."""
-    mask = build_mask(hsv, cfg)
-    h, w = hsv.shape[:2]
+def _search(hsv, build_mask, state, cfg, origin=(0, 0), full_size=None, busy=None):
+    """find_ball_candidates for one color: (candidates, cores), in whole-frame
+    pixels (hsv may be a window starting at origin, of a full_size frame)."""
+    mask = build_mask(hsv, cfg, busy)
+    h, w = full_size or hsv.shape[:2]
+    ox, oy = origin
     roi = cfg["self_highlight_roi"]
-    own_x0, own_x1 = roi["x0"] * w, roi["x1"] * w
-    own_y0, own_y1 = roi["y0"] * h, roi["y1"] * h
+    own_x0, own_x1 = roi["x0"] * w - ox, roi["x1"] * w - ox
+    own_y0, own_y1 = roi["y0"] * h - oy, roi["y1"] * h - oy
 
     def on_own_character(x, y):
         # Your own character sits in this fixed region: while you're
@@ -315,7 +344,7 @@ def _search(hsv, build_mask, state, cfg):
         return own_x0 <= x <= own_x1 and own_y0 <= y <= own_y1
 
     def prepare(mask):
-        mask = apply_ui_mask(mask, cfg)
+        mask = apply_ui_mask(mask, cfg, origin, full_size)
         return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
     candidates, cores = [], []
@@ -360,6 +389,9 @@ def _search(hsv, build_mask, state, cfg):
             if found:
                 break
 
+    if origin != (0, 0):
+        candidates = [(c, x + ox, y + oy, st, r) for c, x, y, st, r in candidates]
+        cores = [(c, x + ox, y + oy, st, r) for c, x, y, st, r in cores]
     return candidates, cores
 
 
