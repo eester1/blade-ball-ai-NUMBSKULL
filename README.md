@@ -6,7 +6,7 @@ There is no game-engine integration and no memory reading — everything is done
 
 ## A learning project
 
-This is an **educational project**: a hands-on way to learn how a game-playing AI is built from nothing but screenshots and your own gameplay. It isn't meant as a cheat or a way to get ahead of other players. It isn't good enough for that anyway (see [Known Limitations](#known-limitations)), and using it in public matches breaks Roblox's rules (see the warning below).
+This is an **educational project**: a hands-on way to learn how a game-playing AI is built from nothing but screenshots and your own gameplay. It isn't meant as a cheat or a way to get ahead of other players. It isn't good enough for that anyway: it still dies in most rounds (see [Known Limitations](#known-limitations)). And using it in public matches breaks Roblox's rules (see the warning below).
 
 What you can learn from it:
 
@@ -17,7 +17,7 @@ What you can learn from it:
 
 If you want to try it, the safest place is a private server or practice mode.
 
-> **Status:** functional but not reliable enough to play unattended yet. See [Known Limitations](#known-limitations) before expecting too much of it.
+> **Status:** plays whole rounds by itself (**Auto**), and with the [recommended settings](#recommended-settings) it survives about **88%** of the times the ball comes for it. That's good enough to win the occasional round, but it still dies in most of them, mostly in fast exchanges and close end-of-duel clashes. See [Known Limitations](#known-limitations).
 
 > [!WARNING]
 > **Using a bot to play Roblox games is against Roblox's Terms of Use**, and it can get your account warned or banned. That goes especially for leaving it running unattended for hours, which is exactly what anti-cheat systems look for. Use this project at your own risk, and stay nearby while it plays. If you do leave it running for a long time anyway, at least untick **Save a log of this run**: a logged run saves about **29 GB of screenshots per hour** of play. See [Long runs and log size](#long-runs-and-log-size).
@@ -30,7 +30,7 @@ If you want to try it, the safest place is a private server or practice mode.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
 - **Only acts in Roblox** — it sends input only while the Roblox window is active, so it never types into another program.
 - **Learns from you** — record your own games; the AI copies what you do in each situation.
-- **[Learns from its own games](#learned-block-timing-learning-from-the-ais-own-games)** — press **Learn from my runs** and it works out, from its own logged games, when blocking actually saved it, then blocks at that timing (**Learned block timing**). Needs **Save a log of this run** on.
+- **[Learns from its own games](#learned-block-timing-learning-from-the-ais-own-games)** (experimental) — press **Learn from my runs** and it works out, from its own logged games, when blocking actually saved it, then blocks at that timing (**Learned block timing**). Needs **Save a log of this run** on. Not reliable yet, so it's off by default.
 - **Keeps the ball in view** — turns the camera to follow the ball, and swings round to find it the moment you're targeted.
 - **Block timing** — blocks when the ball is about to reach you, judged from its distance, size and speed.
 - **Run scoring** — after each run, lists every time you were targeted and whether you blocked, survived or died.
@@ -42,8 +42,8 @@ If you want to try it, the safest place is a private server or practice mode.
 ```
 record_gameplay.py          track_ball.py            build_dataset.py        train_model.py         play_live.py
 ─────────────────────       ─────────────────        ──────────────────      ─────────────────      ─────────────────
-Screenshot + input     -->  Detect ball position, --> Merge into one     --> Train a small     --> Detect ball live,
-logger while you play       state and size             dataset.csv           MLP classifier         turn camera to keep
+Screenshot + input     -->  Detect ball position, --> Merge into one     --> Train 5 small     --> Detect ball live,
+logger while you play       state and size             dataset.csv           neural nets            turn camera to keep
                             per recorded session       (features.py)         (model.joblib)         it in view, predict
                                                                                                     + press actions
 ```
@@ -51,7 +51,7 @@ logger while you play       state and size             dataset.csv           MLP
 1. **Record** — `record_gameplay.py` captures your screen at a fixed rate while logging which keys/mouse buttons are held, producing one folder per session under `recordings/`.
 2. **Track** — `track_ball.py` re-processes each recorded session's frames offline to find the ball's pixel position, whether it's idle (white) or targeting (red), and its apparent size in each frame, using color thresholding + shape filtering + temporal heuristics (see [Ball Detection](#ball-detection-track_ballpy)).
 3. **Build dataset** — `build_dataset.py` merges the recorded inputs and tracked ball positions from one or more sessions into a single `dataset.csv`, computing features with `features.py` (see [Features](#features-featurespy)).
-4. **Train** — `train_model.py` trains a small multi-label neural network (`model.joblib`) to predict which actions you'd take, given the ball's state.
+4. **Train** — `train_model.py` trains five small multi-label neural networks and averages them (`model.joblib`), to predict which actions you'd take, given the ball's state.
 5. **Play live** — `play_live.py` runs the same ball detection and the same `features.py` code in real time, turns the camera to keep the ball on screen, and presses/releases keys and mouse buttons to match the model's predictions. With [Auto](#auto), `game_state.py` tells it when you're in a round and when you're in the lobby.
 
 ## Setup
@@ -92,7 +92,7 @@ The setup that measured best in live testing: the AI survived **88%** of the tim
 
 ### In Blade Ball
 
-- **Use a passive ability, and prefer Guardian Angel.** The AI never presses the ability key: your recordings have no ability use in them, so it never learned to. An active ability would just sit unused, while a passive one works on its own.
+- **Use a passive ability, and prefer Guardian Angel.** The AI never presses the ability key: the recordings it learned from have no ability use in them, so it never learned to. An active ability would just sit unused, while a passive one works on its own.
   - **Guardian Angel** is the best choice: the first hit that would kill you doesn't, so each round gets one free mistake. That matters a lot here. A round can target you 5–10 times, and at 88% per targeting, surviving 5 in a row is only about a 1 in 2 chance. One forgiven miss raises that a lot.
   - To **compare changes to the AI**, use a passive that doesn't save you (e.g. Reaper). With Guardian Angel, a first miss doesn't end the round, so scoring can't tell it apart from a block, and the numbers aren't comparable with earlier runs.
 - **Windowed or fullscreen: whichever you recorded in.** See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record).
@@ -358,7 +358,7 @@ Labels describe what an action *does* rather than which button did it, so blocki
 python train_model.py dataset.csv -o model.joblib
 ```
 
-- Trains an `MLPClassifier` (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), on the 11 features from `features.py` (see [Model](#model-train_modelpy)).
+- Trains 5 `MLPClassifier`s (scikit-learn) with hidden layers `[32, 16]` by default (`--hidden-sizes` to change), differing only in their random start (`--seeds` to change how many), on the 11 features from `features.py`, and averages them (see [Model](#model-train_modelpy)).
 - Skips any label with no positive examples yet (e.g. `held_ability` until you've recorded sessions where you pressed Q) — a label that's always 0 can't be learned.
 - Splits each session's data by time (last 20% held out as test set, not a random split — avoids testing on near-duplicate frames the model basically already saw).
 - Oversamples rare rows in the *training* set only: frames with block/ability held (5x), and frames in the fastest 15% of ball speed (3x) — both are underrepresented relative to how much they matter.
@@ -456,7 +456,7 @@ Motion history (velocity, radius growth) restarts after gaps longer than 1 secon
 
 ## Model (`train_model.py`)
 
-A small multi-label MLP — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees the 11 numeric features above.
+Five small multi-label MLPs (hidden layers 32 and 16), averaged — no vision component. `track_ball.py` handles "seeing" the ball; the model only ever sees the 11 numeric features above. They're identical except for their random starting weights: on this little data a single network's results swing noticeably with that (block F1 0.29–0.33), and averaging five smooths it out (`ensemble.py`).
 
 **Outputs (independent per-action confidence, each with its own decision threshold in `play_live.py`):** `held_w`, `held_a`, `held_s`, `held_d`, `held_block`, `held_ability` (only labels that have examples in the training data — see step 5).
 
@@ -487,7 +487,7 @@ Blade Ball's menu on the left of the screen changes with where you are. Whenever
 
 `game_state.py` looks for that button. It picks out only the button's bright green pixels, so the map showing through behind the menu doesn't matter, and compares them with a picture of the button (`assets/trade_button.png`). Across every frame saved from live play so far, frames with the button scored at least 0.93 and frames without it at most 0.52. The cut-off is 0.75, and it takes about 1.5 ms per check.
 
-To avoid reacting to a single odd frame, it only switches after several checks in a row agree: 2 checks to decide "lobby", 3 to decide "in a round". While playing it checks every 3rd frame; while waiting, every frame. So it pauses within about half a second of you dying, and starts within about a quarter of a second of a round beginning.
+To avoid reacting to a single odd frame, it only switches after several checks in a row agree: 2 checks to decide "lobby", 9 to decide "in a round". While playing it checks about every 0.2 s; while waiting, every frame. So it pauses within about half a second of you dying, and starts within about a quarter of a second of a round beginning.
 
 ### Safety
 
@@ -515,7 +515,10 @@ If Blade Ball restyles the vote panel, take a screenshot of it, crop the "Classi
 
 ## Learned block timing (learning from the AI's own games)
 
-The built-in block rules were tuned by hand. This lets the AI learn **when to block from its own results** instead: which blocks actually saved it, and which didn't. It doesn't copy you; it learns from outcomes, so it can end up better than any recording.
+The built-in block rules were tuned by hand. This lets the AI learn **when to block from its own results** instead: which blocks actually saved it, and which didn't. It doesn't copy you; it learns from outcomes, so in principle it can end up better than any recording.
+
+> [!NOTE]
+> **Not recommended yet: leave Learned block timing unticked.** In practice, what it learns isn't reliable. The learned distance jumped around between batches of runs (39, then 38, then 54). And the far taps that looked better turned out to be mostly on slow, easy balls, not proof that tapping earlier works. The built-in rules, with **Hold block while the ball hovers**, did better. It's kept as an experiment.
 
 > [!IMPORTANT]
 > **It can only learn from runs played with Save a log of this run ticked, and with Auto on.** The log is where it finds what the ball looked like at every block tap. Auto's lobby markers in the log are how it knows whether each block ended in survival or death. Runs without logging, or without Auto, are invisible to it.
@@ -549,13 +552,13 @@ Blocking while the ball is still a bit farther out works much better, and the fa
 - **What counts as an outcome:** back in the lobby within 3 seconds of being targeted counts as died (or the round ended, if you'd just won). Targeted again within 15 seconds counts as survived. Targetings with neither, and targetings with no block tap, are left out.
 - **How the distance is chosen:** the block fires as soon as the ball comes within the learned distance, so the tap lands just inside it. It picks the closest distance for which taps in the 15 radii just inside it survived at least 90% of the time, with at least 15 taps there. That way blocks come as early as needed and no earlier.
 - **By hand:** `python learn_block.py` does the same as the button, and `python learn_block.py --dry-run` prints what it would learn without saving.
-- **Comparing:** play some logged runs with it ticked and some unticked, and **Score** them (**Score all runs** gives a total). Survival per targeting with the built-in rules was about 75–85% in recent runs.
+- **Comparing:** play some logged runs with it ticked and some unticked, and **Score** them (**Score all runs** gives a total). Survival per targeting with the built-in rules and the [recommended settings](#recommended-settings) is about 88%.
 
 ## Experimental block options
 
-Two tick boxes in the panel's Play section. **Hold block while the ball hovers is on by default** (see the results below), and **Spam block is off**. Both can be switched either way and compared. Every run's log records which options it used, and **Score latest run** shows them, so logged Auto runs with and without can be compared.
+Three tick boxes in the panel's Play section. **Hold block while the ball hovers is on by default** (see the results below). **Spam block in fast exchanges** and **Spam block in close clashes** are off, because both did worse in live testing. All can be switched either way and compared. Every run's log records which options it used, and **Score latest run** shows them, so logged Auto runs with and without can be compared.
 
-Why they exist: sorting every logged targeting by situation showed where the AI dies most.
+Why they exist: sorting every logged targeting by situation showed where the AI died most at the time. These are the older figures; see [What to expect](#what-to-expect) for the current ones.
 
 | Situation | Survived |
 |---|---|
@@ -581,7 +584,7 @@ It also **keeps spamming between hits**. For up to 0.9 s after a targeting ends,
 
 Tapping block over and over seems to spend the block before the ball arrives, rather than catching it.
 
-The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
+Why it was tried: the logs show timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. What did help fast exchanges in the end was reacting faster, and a camera that doesn't turn away from the ball (about 71% → 80–85%).
 
 ### Spam block in close clashes (`--clash-spam`, off by default)
 
@@ -618,7 +621,7 @@ An early tap spends the block, and when the ball finally arrives it fails. Timin
 | Normal, off → on | 176 → 71 | 82% → 87% | |
 | Fast exchanges, off → on | 93 → 17 | 71% → 71% | |
 
-So it's now **on by default** in the panel. Fast exchanges are unchanged, and are now the weakest situation.
+So it's now **on by default** in the panel. It didn't change fast exchanges; later changes (faster reactions, a steadier camera) lifted those to about 80–85%.
 
 **Before it was tried:** on the logged taps, this option would have held back **29%** of the too-early taps, but also delayed **13%** of well-timed taps. A delayed tap isn't necessarily a missed one: it taps as soon as the ball starts moving in. It's a trade-off to measure, not a proven fix.
 
@@ -707,11 +710,11 @@ Use it to compare before/after a change instead of judging from one memorable ma
 
 - **Ball detection can still lock onto decoys.** Map decorations, other players' cosmetics, glow near your own character, and similar red/white objects can pass the same color/shape filter as the real ball. The learned ball detector plus the tracking rules catch most cases, but the detector is only as good as its training labels, which come from the rule-based tracker itself (no hand-labeled data) — so it learns the tracker's habits along with the ball's look. Hand-labeling a few hundred tricky frames would make it sharper.
 - **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally.
-- **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball.
-- **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do. Until then, use a passive ability (Guardian Angel is best), see [Recommended settings](#recommended-settings).
+- **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball. A balancing rule stops it drifting off to one side of the map (see [Balanced sidestepping](#balanced-sidestepping)), but it still sidesteps left somewhat more than right.
+- **Doesn't use abilities.** The recorder records Q, but the recordings the current model learned from have no ability use in them, so it never learned to use one. Use a passive ability instead (Guardian Angel is best), see [Recommended settings](#recommended-settings). To teach it an active ability, record games where you use it, then **Update model**.
 - **Loses most close clashes.** At the end of a duel the two players close in and spam click. From the screen alone, a ball stuck on you in a clash looks the same as a ball about to hit you, and both spam options that tried to handle it did worse. Telling them apart would need the AI to track where the other players are, which it doesn't yet.
-- **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
-- **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from live runs. **Learned block timing** can replace the key distance with one learned from the AI's own results, but only from **logged Auto runs**. Its outcome labels are approximate ("died" can mean the round ended), and it learns a single distance, not a full timing model. `score_logs.py` shows the ball's distance and size at every tap.
+- **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind. With the current camera rules this is rare: the ball was off screen when it arrived in about 2% of targetings in the best test.
+- **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from live runs. **Learned block timing** can replace the key distance with one learned from the AI's own results, but what it learns hasn't been reliable so far (see [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games)). `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. Red lava next to your character used to read as targeted too; only the tint's darker red counts now (`self_highlight_val_max` 180). The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
