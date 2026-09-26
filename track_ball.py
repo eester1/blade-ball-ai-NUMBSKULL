@@ -62,6 +62,12 @@ DEFAULT_CONFIG = {
     # map: sky brightness 157-197, ball 238). ~95% of tracked white balls in
     # the recordings are at least this bright.
     "white_split_val_min": 215,
+    # ...and, if that finds nothing, only nearly colorless pixels: on a pale
+    # sky-and-sand map the background is as bright as the ball (~235), so
+    # brightness can't split them -- but it's faintly tinted (saturation
+    # 12-45) while the ball is colorless (3-5). Seen live: the ball in view
+    # but merged into the background in a third of the missed frames.
+    "white_split_sat_max": 10,
     # Red targeting ball: red wraps around hue 0, so two ranges
     "red_hue_low_max": 10,
     "red_hue_high_min": 170,
@@ -337,15 +343,22 @@ def _search(hsv, build_mask, state, cfg):
     # the ball entirely. The ball is still clearly *brighter* than such a
     # background, so look inside failed white blobs again with a stricter
     # brightness cutoff; normal (unmerged) detection is left as is.
+    # If that splits nothing out, try again with only nearly colorless
+    # pixels (see white_split_sat_max).
     if state == "idle" and failed:
-        strict = prepare(cv2.inRange(
-            hsv, (0, 0, cfg["white_split_val_min"]), (180, cfg["white_sat_max"], 255)))
-        for c in cv2.findContours(strict, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
-            blob = _blob(c, strict, cfg)
-            if blob is None or not blob["ok"] or on_own_character(blob["x"], blob["y"]):
-                continue
-            if any(cv2.pointPolygonTest(f, (blob["x"], blob["y"]), False) >= 0 for f in failed):
-                candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
+        for sat_max in (cfg["white_sat_max"], cfg.get("white_split_sat_max", 10)):
+            strict = prepare(cv2.inRange(
+                hsv, (0, 0, cfg["white_split_val_min"]), (180, sat_max, 255)))
+            found = False
+            for c in cv2.findContours(strict, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+                blob = _blob(c, strict, cfg)
+                if blob is None or not blob["ok"] or on_own_character(blob["x"], blob["y"]):
+                    continue
+                if any(cv2.pointPolygonTest(f, (blob["x"], blob["y"]), False) >= 0 for f in failed):
+                    candidates.append((blob["circularity"], blob["x"], blob["y"], state, blob["radius"]))
+                    found = True
+            if found:
+                break
 
     return candidates, cores
 
