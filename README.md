@@ -21,7 +21,7 @@ There is no game-engine integration and no memory reading — everything is done
 - **Block timing** — blocks when the ball is about to reach you, judged from its distance, size and speed.
 - **Run scoring** — after each run, lists every time you were targeted and whether you blocked, survived or died.
 
-See the [changelog](CHANGELOG.md) for what's new.
+**Start with [Recommended settings](#recommended-settings)** for the setup that tested best. See the [changelog](CHANGELOG.md) for what's new.
 
 ## How it works
 
@@ -51,6 +51,45 @@ pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow dxc
 In the fastest exchanges the ball is on you 0.1–0.35 s after your red tint shows, so the time between the tint showing and the click matters. To look more often, the ball search runs its white-ball and red-ball halves side by side (about 21 ms a frame instead of 27, with identical results). A block tap no longer pauses the AI while the button is held down, and with logging on, screenshots are saved in the background. Each logged frame records how long it took (`frame_ms`), so the real speed with Roblox running shows in the logs.
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
+
+## Recommended settings
+
+The setup that measured best in live testing: the AI survived **88%** of the times the ball came for it (129 targetings over 20 rounds).
+
+### In Blade Ball
+
+- **Use a passive ability, and prefer Guardian Angel.** The AI never presses the ability key: your recordings have no ability use in them, so it never learned to. An active ability would just sit unused, while a passive one works on its own.
+  - **Guardian Angel** is the best choice: the first hit that would kill you doesn't, so each round gets one free mistake. That matters a lot here. A round can target you 5–10 times, and at 88% per targeting, surviving 5 in a row is only about a 1 in 2 chance. One forgiven miss raises that a lot.
+  - To **compare changes to the AI**, use a passive that doesn't save you (e.g. Reaper). With Guardian Angel, a first miss doesn't end the round, so scoring can't tell it apart from a block, and the numbers aren't comparable with earlier runs.
+- **Windowed or fullscreen: whichever you recorded in.** See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record).
+- **The same camera zoom as your recordings** (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
+- **Shift lock the same as when recording.** The model learned your movement relative to the camera.
+- **Sword:** any. Its look barely matters to the AI, although a sword with bright white or red effects can occasionally be mistaken for the ball.
+
+### In the panel
+
+| Setting | Use | Why |
+|---|---|---|
+| Camera | `mouse` | Fastest and most reliable way to turn |
+| Auto | on | Plays round after round by itself |
+| Save a log of this run | on while testing, off for long runs | About 29 GB of screenshots per hour, see [Long runs](#long-runs-and-log-size) |
+| Hold block while the ball hovers | **on** | Stops early blocks on slow balls (slow balls survived 68% → 87%) |
+| Spam block in fast exchanges | **off** | Tested live twice, did worse both times |
+| Spam block in close clashes | **off** | Mistook ordinary incoming balls for clashes, did worse |
+| Learned block timing | **off** | What it learns is unreliable so far |
+
+### What to expect
+
+With this setup, the AI survives about:
+
+| Situation | Survived |
+|---|---|
+| Slow balls (early game) | ~90% |
+| Normal | ~87% |
+| Fast exchanges | ~80% |
+| Standoffs (the ball bouncing back 3+ times in a row) | ~7 in 10 |
+
+It still loses most **close clashes at the end of a duel**, where both players spam click. It can't yet tell those apart from an ordinary incoming ball, see [Known Limitations](#known-limitations).
 
 ## Windowed or fullscreen? Play the way you record
 
@@ -635,7 +674,8 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Ball detection can still lock onto decoys.** Map decorations, other players' cosmetics, glow near your own character, and similar red/white objects can pass the same color/shape filter as the real ball. The learned ball detector plus the tracking rules catch most cases, but the detector is only as good as its training labels, which come from the rule-based tracker itself (no hand-labeled data) — so it learns the tracker's habits along with the ball's look. Hand-labeling a few hundred tricky frames would make it sharper.
 - **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally.
 - **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball.
-- **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do.
+- **Ability has no training data yet.** Q wasn't recorded before, so the model can't use abilities until you record new sessions where you do. Until then, use a passive ability (Guardian Angel is best), see [Recommended settings](#recommended-settings).
+- **Loses most close clashes.** At the end of a duel the two players close in and spam click. From the screen alone, a ball stuck on you in a clash looks the same as a ball about to hit you, and both spam options that tried to handle it did worse. Telling them apart would need the AI to track where the other players are, which it doesn't yet.
 - **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind.
 - **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from live runs. **Learned block timing** can replace the key distance with one learned from the AI's own results, but only from **logged Auto runs**. Its outcome labels are approximate ("died" can mean the round ended), and it learns a single distance, not a full timing model. `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. Red lava next to your character used to read as targeted too; only the tint's darker red counts now (`self_highlight_val_max` 180). The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
