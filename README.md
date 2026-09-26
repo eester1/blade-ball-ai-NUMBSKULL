@@ -152,6 +152,7 @@ This opens a window with a button for everything, so you never have to type the 
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. It starts **unticked** every time the panel opens. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
   - **Spam block in fast exchanges** (off by default) and **Hold block while the ball hovers** (**on** by default, since it proved itself in live runs) — block options, both remembered. See [Experimental block options](#experimental-block-options).
+  - **Spam block in close clashes** (**on** by default, remembered) — taps block every 0.05 s when a red ball is stuck right on you, as in the clash at the end of a duel. See [Spam block in close clashes](#spam-block-in-close-clashes---clash-spam-on-by-default).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -510,6 +511,16 @@ It also **keeps spamming between hits**. For up to 0.9 s after a targeting ends,
 Tapping block over and over seems to spend the block before the ball arrives, rather than catching it.
 
 The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
+
+### Spam block in close clashes (`--clash-spam`, on by default)
+
+At the end of a duel the two players close in until the ball bounces between them faster than anyone can time it, and players spam click (faster than every 0.1 s). On screen that's a **red ball stuck right on top of you** while you're targeted, with the game counting the hits above it.
+
+The AI normally taps block at most every 0.35 s, and only when its rules say the ball is coming. In the logs, a red ball within 15 ball radii of you (3D) for at least 0.15 s of the last 0.8 s, with your tint on, happened 157 times (about 3 minutes of play in all). The AI died after 70 of them, 63 of those without a single tap.
+
+So when that shows, it taps block **every 0.05 s**, and keeps going for 0.5 s after the last sign of it, since mid-clash the ball is often too fast to see. The console prints `[clash -- spamming block]`, and logged frames record it (`clash`). Untick **Spam block in close clashes** in the panel to turn it off.
+
+Unlike **Spam block in fast exchanges**, which fired on any quick re-targeting and did worse, this fires only with the ball actually on you.
 
 ### Hold block while the ball hovers (`--hold-hover`)
 

@@ -218,6 +218,9 @@ class App:
         self.hold_hover = tk.BooleanVar(value=saved.get("hold_hover", True))  # on unless unticked
         ttk.Checkbutton(play, text="Hold block while the ball hovers", variable=self.hold_hover).grid(
             row=5, column=2, columnspan=2, sticky="w")
+        self.clash_spam = tk.BooleanVar(value=saved.get("clash_spam", True))  # on unless unticked
+        ttk.Checkbutton(play, text="Spam block in close clashes", variable=self.clash_spam).grid(
+            row=6, column=0, columnspan=2, sticky="w")
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")
         self.stop_key = tk.StringVar(value=saved.get("stop_key", "End"))
         if self.stop_key.get() not in STOP_KEYS:
@@ -372,7 +375,7 @@ class App:
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
                 "stop_key": self.stop_key.get(),
                 "rounds_total": self.rounds_total, "spam_block": self.spam_block.get(),
-                "hold_hover": self.hold_hover.get()},
+                "hold_hover": self.hold_hover.get(), "clash_spam": self.clash_spam.get()},
                 indent=2))
         except OSError:
             pass  # not worth failing a start over
@@ -433,6 +436,8 @@ class App:
             argv.append("--spam-block")
         if self.hold_hover.get():
             argv.append("--hold-hover")
+        if self.clash_spam.get():
+            argv.append("--clash-spam")
         self.proc_quit_key = getattr(keyboard.Key, quit_key)
         self.run("AI running." if self.auto.get() else
                  "AI loaded -- press Insert in Roblox to turn it on.",

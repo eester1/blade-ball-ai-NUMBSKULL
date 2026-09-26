@@ -141,6 +141,26 @@ SPAM_NEAR_3D = 40
 # after it was last seen that close.
 SPAM_UNSEEN_S = 0.4
 
+# Spam block in close clashes (--clash-spam): at the end of a duel the two
+# players close in until the ball bounces between them faster than anyone
+# can time -- players spam click (faster than every 0.1s). It shows as a
+# red ball stuck right on top of you while you're targeted. Over all logged
+# runs, a red ball within CLASH_NEAR_3D ball radii of you for at least
+# CLASH_MIN_CLOSE_S of the last CLASH_WINDOW_S, with your tint on, happened
+# 157 times (~3 minutes in all) -- and the AI died after 70 of them, 63 of
+# those without a single tap: normally it taps at most every 0.35s
+# (TAP_ACTIONS). These settings caught a logged final-duel clash as it
+# began, where tighter ones (12, 0.6s, 0.25s) only did 1.5s in. When
+# that shows, tap every CLASH_TAP_S, and keep going for CLASH_HOLD_S after
+# the last sign of it (mid-clash the ball is often too fast to see). Unlike
+# --spam-block (any quick re-targeting, which did worse), it only fires
+# with the ball actually on you.
+CLASH_NEAR_3D = 15
+CLASH_WINDOW_S = 0.8
+CLASH_MIN_CLOSE_S = 0.15
+CLASH_TAP_S = 0.05
+CLASH_HOLD_S = 0.5
+
 # Hold block while the ball hovers (--hold-hover, off by default): while a
 # red ball coming at you is barely growing on screen and barely closing in,
 # don't tap yet. Slow early-game balls hang near you: in 67% of slow-ball
@@ -597,7 +617,7 @@ class Camera:
 class AIController:
     def __init__(self, model_path, camera_method="keys", camera_invert=False, log_path=None,
                  use_classifier=True, auto=False, quit_key=DEFAULT_QUIT_KEY, vote=None,
-                 spam_block=False, hold_hover=False):
+                 spam_block=False, hold_hover=False, clash_spam=False):
         data = joblib.load(model_path)
         self.model = data["model"]
         self.scaler = data["scaler"]
@@ -642,6 +662,10 @@ class AIController:
         self.rounds_played = 0     # Auto: rounds started this run (see set_phase)
         self.spam_block = spam_block  # see SPAM_*
         self.hold_hover = hold_hover  # see HOVER_*
+        self.clash_spam = clash_spam  # see CLASH_*
+        self.clash_hist = []          # (t, seconds the red ball was on you, tint on) per frame
+        self.clash_until = -1e9       # clash mode is on until then
+        self.last_frame_t = None
         self.was_targeted = False
         self.targeted_until = -1e9    # when you were last targeted
         self.fast_exchange = False    # this targeting came right after the last one
@@ -740,6 +764,24 @@ class AIController:
             self.spam_near_t = t
             return True
         return ball is None and t - self.spam_near_t < SPAM_UNSEEN_S
+
+    def clashing(self, ball, tint_on, t, character_xy, screen_h):
+        """--clash-spam: a red ball stuck right on you while targeted (see
+        CLASH_*). Call once per frame, ball or not."""
+        if not self.clash_spam:
+            return False
+        dt = 0.0 if self.last_frame_t is None else min(t - self.last_frame_t, 0.1)
+        self.last_frame_t = t
+        close = ball is not None and ball[2] == "targeting" and \
+            ball_distance_3d(ball[0], ball[1], ball[3], character_xy, screen_h) <= CLASH_NEAR_3D
+        self.clash_hist = [h for h in self.clash_hist if t - h[0] <= CLASH_WINDOW_S]
+        self.clash_hist.append((t, dt if close else 0.0, tint_on))
+        if sum(h[1] for h in self.clash_hist) >= CLASH_MIN_CLOSE_S and \
+                any(h[2] for h in self.clash_hist):
+            if t > self.clash_until:
+                print("[clash -- spamming block]")
+            self.clash_until = t + CLASH_HOLD_S
+        return t <= self.clash_until
 
     def balance_strafe(self, desired, t):
         """Swap A/D when it's strafed too much one way lately (see STRAFE_*)."""
@@ -1106,6 +1148,7 @@ class AIController:
             "self_red": round(self.self_red, 4),
             "frame_ms": round(frame_ms, 1),  # screen grab to actions sent
             "windowed": self.windowed,       # searched only around the ball (WINDOW_*)
+            "clash": t <= self.clash_until,  # spamming block in a close clash (CLASH_*)
         }
         self._log_file.write(json.dumps(entry) + "\n")
         self._log_file.flush()
@@ -1123,7 +1166,7 @@ class AIController:
         self.log_event(time.time(), "settings", block_3d_dist=BLOCK_3D_DIST,
                        auto=self.lobby is not None, vote=self.vote_mode, fps=FPS,
                        capture=self.screen.method, spam_block=self.spam_block,
-                       hold_hover=self.hold_hover)
+                       hold_hover=self.hold_hover, clash_spam=self.clash_spam)
         width, height = region["width"], region["height"]
         center_x, center_y = width / 2, height / 2
         self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
@@ -1186,6 +1229,7 @@ class AIController:
                     self.self_red = self.targeted_at[1]
                 targeted = self.self_red >= self.cfg["self_target_threshold"]
                 self.update_exchange(targeted, capture_t)
+                clash = self.clashing(ball, targeted, capture_t, character_xy, height)
                 row = proba = None
                 desired = tapped = set()
 
@@ -1198,7 +1242,10 @@ class AIController:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
-                    if self.spamming(targeted, None, capture_t):
+                    if clash:
+                        # Mid-clash the ball is often too quick to see.
+                        tapped = self.apply_actions({"block"}, tap_every=CLASH_TAP_S)
+                    elif self.spamming(targeted, None, capture_t):
                         # In a fast exchange the ball is often too quick to see.
                         tapped = self.apply_actions({"block"}, tap_every=SPAM_TAP_S)
                     self.steer_camera(None, width, capture_t, targeted)
@@ -1235,7 +1282,9 @@ class AIController:
 
                     desired = self.balance_strafe(desired, capture_t)
                     spam = self.spamming(targeted, ball, capture_t, character_xy, height)
-                    if spam:
+                    if clash:
+                        desired = desired | {"block"}
+                    elif spam:
                         desired = desired | {"block"}
                     elif self.hovering(ball, targeted, capture_t):
                         desired = desired - {"block"}
@@ -1244,7 +1293,8 @@ class AIController:
                         desired = desired | {"block"}
                     else:
                         desired = desired - {"block"}
-                    tapped = self.apply_actions(desired, tap_every=SPAM_TAP_S if spam else None)
+                    tapped = self.apply_actions(desired, tap_every=CLASH_TAP_S if clash else
+                                                SPAM_TAP_S if spam else None)
                     self.steer_camera(ball, width, capture_t, targeted)
 
                 if self._log_file is not None:
@@ -1297,6 +1347,9 @@ def main():
     parser.add_argument("--spam-block", action="store_true",
                         help="In fast exchanges (targeted again within 0.9s), tap block every "
                              "0.1s while targeted")
+    parser.add_argument("--clash-spam", action="store_true",
+                        help="Spam block (every 0.05s) in close clashes: a red ball stuck right "
+                             "on you while you're targeted")
     parser.add_argument("--hold-hover", action="store_true",
                         help="Don't tap block while a red ball coming at you is barely moving "
                              "in (slow early-game balls)")
@@ -1330,11 +1383,13 @@ def main():
                               use_classifier=not args.no_classifier, auto=args.auto,
                               quit_key=args.quit_key,
                               vote=None if args.vote == "none" else args.vote,
-                              spam_block=args.spam_block, hold_hover=args.hold_hover)
-    if args.spam_block or args.hold_hover:
+                              spam_block=args.spam_block, hold_hover=args.hold_hover,
+                              clash_spam=args.clash_spam)
+    if args.spam_block or args.hold_hover or args.clash_spam:
         print("Block options: " + ", ".join(
             name for name, on in (("spam in fast exchanges", args.spam_block),
-                                  ("hold while the ball hovers", args.hold_hover)) if on))
+                                  ("hold while the ball hovers", args.hold_hover),
+                                  ("spam in close clashes", args.clash_spam)) if on))
     print("Ball classifier: " + ("on" if controller.scorer else
                                  "off" if args.no_classifier else "not trained yet (off)"))
     if args.log:
