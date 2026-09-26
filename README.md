@@ -136,6 +136,7 @@ The model in the portable download and in `blade-ball-ai-pretrained-2026-09-25.z
 | Ball detector | A learned filter trained on the same recordings (see [Learned ball detector](#learned-ball-detector-ball_classifierpy)) |
 | Setup it expects | 1920×1080 screen, Roblox windowed and maximized, camera zoom 12 notches out from first person, shift lock on |
 | Abilities | Never uses them; the recordings had none. Use a passive ability. |
+| Sword | **Any sword works, including the free default one.** The model never sees your sword: it only reads numbers about the ball. Swords are cosmetic in Blade Ball anyway. |
 | Made with | Python 3.14, scikit-learn 1.9.1 |
 | Result | Survived **88%** of the times the ball came for it, over 20 test rounds with the [recommended settings](#recommended-settings) |
 
@@ -155,7 +156,7 @@ The setup that measured best in live testing: the AI survived **88%** of the tim
 - **Windowed or fullscreen: whichever you recorded in.** See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record).
 - **The same camera zoom as your recordings** (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
 - **Shift lock the same as when recording.** The model learned your movement relative to the camera.
-- **Sword:** any. Its look barely matters to the AI, although a sword with bright white or red effects can occasionally be mistaken for the ball.
+- **Sword: any, including the free default one.** Swords are cosmetic in Blade Ball, and the AI's model never looks at yours: it only reads numbers about the ball (where it is, how fast it moves, how big it looks, whether you're highlighted red). So you don't need the sword the recordings were made with. The only thing to avoid is a sword with big **bright white, red or pink effects** around your character: the AI finds the ball and checks "am I targeted?" by colour, so those effects can occasionally be mistaken for the ball or for your red highlight. A plain sword is the safest choice.
 
 ### In the panel
 
