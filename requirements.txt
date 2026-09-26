@@ -1,0 +1,9 @@
+mss
+pynput
+joblib
+pandas
+scikit-learn>=1.9
+opencv-python
+numpy
+pillow
+dxcam

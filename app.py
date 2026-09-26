@@ -28,6 +28,11 @@ from pynput import keyboard
 
 HERE = Path(__file__).resolve().parent
 PYTHON = sys.executable
+# Opened by double-clicking "Blade Ball AI.bat", the panel runs on
+# pythonw.exe (no console window). The scripts it starts use python.exe from
+# the same install; their windows are hidden and their output comes here.
+if Path(PYTHON).name.lower() == "pythonw.exe" and Path(PYTHON).with_name("python.exe").exists():
+    PYTHON = str(Path(PYTHON).with_name("python.exe"))
 
 
 # The big banner at the top of the panel: (text, background, text color).

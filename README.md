@@ -25,6 +25,7 @@ If you want to try it, the safest place is a private server or practice mode.
 ## Features
 
 - **[Pretrained model](#skip-training-use-the-pretrained-model)** — download the ready-trained AI and play without recording or training anything.
+- **Double-click to start** — `Blade Ball AI.bat` installs what's needed the first time and opens the panel. No VS Code or commands needed.
 - **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
 - **[Auto](#auto)** — tick it and the AI plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins. It can also vote for the Classic gamemode in the lobby for you.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
@@ -56,9 +57,27 @@ logger while you play       state and size             dataset.csv           neu
 
 ## Setup
 
+### The easy way: double-click
+
+No VS Code or typing commands needed:
+
+1. **Install Python** from [python.org/downloads](https://www.python.org/downloads/). On the installer's first screen, tick **"Add python.exe to PATH"**.
+2. **Download this project:** on GitHub, press the green **Code** button, then **Download ZIP**, and unzip it somewhere, for example your Documents folder.
+3. **Optional, to skip training:** unzip the [pretrained model](#skip-training-use-the-pretrained-model) into the same folder.
+4. **Double-click `Blade Ball AI.bat`** in that folder.
+   - The first time, a black window opens and installs what the AI needs, which takes a few minutes. After that it opens the panel straight away.
+   - If Windows shows "Windows protected your PC", press **More info**, then **Run anyway**. It does that for any downloaded `.bat` file.
+
+**Tip:** right-click `Blade Ball AI.bat`, then **Show more options**, then **Send to**, then **Desktop (create shortcut)**, to start it from your desktop.
+
+### By hand
+
 ```
-pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow dxcam
+pip install -r requirements.txt
+python app.py
 ```
+
+(`requirements.txt` lists: mss, pynput, joblib, pandas, scikit-learn, opencv-python, numpy, pillow, dxcam.)
 
 `dxcam` is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **45 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with 45 a second. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 45 fps`).
 
@@ -72,7 +91,7 @@ Don't want to record and train your own? Download the ready-trained AI from the 
 
 1. Do the [Setup](#setup) above.
 2. Unzip it into the project folder, so `model.joblib` and `ball_classifier.joblib` sit next to `play_live.py`.
-3. Open the panel (`python app.py`) and press **Start AI**.
+3. Open the panel (double-click `Blade Ball AI.bat`) and press **Start AI**.
 
 **Don't press Update model** unless you've recorded your own games: it retrains from your recordings and replaces the downloaded files.
 
@@ -191,6 +210,8 @@ Measured on this project's own runs:
 3. Play a few logged runs and **Score** them. Check that the "targeted" reading and block timing still hold up; the pixel settings may need re-tuning.
 
 ## The easy way: the control panel
+
+Double-click `Blade Ball AI.bat` (see [Setup](#setup)), or run:
 
 ```
 python app.py
