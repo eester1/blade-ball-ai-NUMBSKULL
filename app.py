@@ -416,7 +416,8 @@ class App:
         self.rounds_run = 0
         self.update_rounds()
         if not (HERE / "model.joblib").exists():
-            self.status.set("No model.joblib yet -- record some gameplay, then Update model.")
+            self.status.set("No model.joblib yet -- download the pretrained model (README: Skip "
+                            "training), or record some gameplay, then Update model.")
             return
         self.save_settings()
         quit_key = STOP_KEYS[self.stop_key.get()]

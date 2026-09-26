@@ -4,6 +4,7 @@
 
 ### New
 
+- **Pretrained model download:** the trained AI and ball detector are attached to releases as a zip, so you can play without recording or training. See [Skip training](README.md#skip-training-use-the-pretrained-model).
 - **[Recommended settings](README.md#recommended-settings)** in the README: the setup that tested best (88% of targetings survived), which panel options to use, and why to use a passive ability, preferably Guardian Angel.
 - **Spam block in close clashes** (off by default, panel tick box, `--clash-spam`): when a red ball is stuck right on you while you're targeted, the end-of-duel clash, it taps block every 0.05 s instead of at most every 0.35 s. In the logs the AI died after 70 of 157 such moments, 63 of those without a tap. See [Spam block in close clashes](README.md#spam-block-in-close-clashes---clash-spam-off-by-default). Tested live over 20 rounds it mistook ordinary incoming balls for clashes and did worse (the AI died after 7 of 12), so it's off by default.
 - **Finds the ball on pale maps:** on a pale sky-and-sand map the white ball merged into the equally bright background and wasn't recognized. White blobs that fail the shape check are now also split by colourlessness (the ball has almost no tint, the background a little). On that map it found the ball in 20% of the frames it had missed.

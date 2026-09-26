@@ -24,6 +24,7 @@ If you want to try it, the safest place is a private server or practice mode.
 
 ## Features
 
+- **[Pretrained model](#skip-training-use-the-pretrained-model)** — download the ready-trained AI and play without recording or training anything.
 - **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
 - **[Auto](#auto)** — tick it and the AI plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins. It can also vote for the Classic gamemode in the lobby for you.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
@@ -64,6 +65,26 @@ pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow dxc
 In the fastest exchanges the ball is on you 0.1–0.35 s after your red tint shows, so the time between the tint showing and the click matters. To look more often, the ball search runs its white-ball and red-ball halves side by side (about 21 ms a frame instead of 27, with identical results). A block tap no longer pauses the AI while the button is held down, and with logging on, screenshots are saved in the background. Each logged frame records how long it took (`frame_ms`), so the real speed with Roblox running shows in the logs.
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
+
+## Skip training: use the pretrained model
+
+Don't want to record and train your own? Download the ready-trained AI from the [Releases page](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases): the `blade-ball-ai-pretrained-....zip` file attached to a release.
+
+1. Do the [Setup](#setup) above.
+2. Unzip it into the project folder, so `model.joblib` and `ball_classifier.joblib` sit next to `play_live.py`.
+3. Open the panel (`python app.py`) and press **Start AI**.
+
+**Don't press Update model** unless you've recorded your own games: it retrains from your recordings and replaces the downloaded files.
+
+**It was trained on one player's setup**, and it plays best if yours matches:
+- 1920×1080 screen;
+- Roblox windowed and maximized;
+- camera zoom 12 notches out from first person;
+- shift lock on.
+
+The zip's `MODEL_INFO.md` has the details. With a different setup it still runs, but sees the ball less reliably and times blocks worse; for your own setup, [training your own](#the-easy-way-the-control-panel) works best.
+
+`.joblib` files can run code when loaded, so only use model files from a source you trust, like this repository's releases.
 
 ## Recommended settings
 
