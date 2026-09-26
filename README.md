@@ -6,6 +6,12 @@ There is no game-engine integration and no memory reading — everything is done
 
 **Current version: v0.2.4.** To try it, download **`NUMBSKULL-v0.2.4-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
+### Watch it play
+
+[![NUMBSKULL - A blade ball AI (video)](https://img.youtube.com/vi/EGBNm2VoUwE/maxresdefault.jpg)](https://www.youtube.com/watch?v=EGBNm2VoUwE)
+
+*Click the picture to watch the video on YouTube.*
+
 ## A learning project
 
 This is an **educational project**: a hands-on way to learn how a game-playing AI is built from nothing but screenshots and your own gameplay. It isn't meant as a cheat or a way to get ahead of other players. It isn't good enough for that anyway: it still dies in most rounds (see [Known Limitations](#known-limitations)). And using it in public matches breaks Roblox's rules (see the warning below).
