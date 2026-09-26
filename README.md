@@ -25,7 +25,7 @@ If you want to try it, the safest place is a private server or practice mode.
 ## Features
 
 - **[Pretrained model](#skip-training-use-the-pretrained-model)** — download the ready-trained AI and play without recording or training anything.
-- **Double-click to start** — `Blade Ball AI.bat` installs what's needed the first time and opens the panel. No VS Code or commands needed.
+- **One download, nothing to install** — the [portable zip](#easiest-the-portable-download-nothing-to-install) has its own Python, every library and the pretrained model. Extract it and double-click `NUMBSKULL.bat`.
 - **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
 - **[Auto](#auto)** — tick it and the AI plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins. It can also vote for the Classic gamemode in the lobby for you.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
@@ -57,7 +57,19 @@ logger while you play       state and size             dataset.csv           neu
 
 ## Setup
 
-### The easy way: double-click
+### Easiest: the portable download (nothing to install)
+
+1. From the [Releases page](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases), download **`NUMBSKULL-v….-portable.zip`** (about 150 MB).
+2. Extract it, and put the **NUMBSKULL** folder somewhere with a short path, for example straight into Documents.
+3. Double-click **`NUMBSKULL.bat`** inside it. If Windows shows "Windows protected your PC", press **More info**, then **Run anyway**.
+
+That's it. The folder has its own private copy of Python, every library, the pretrained model and the panel, so there's nothing else to download or install. It doesn't touch any Python you already have. To remove it, delete the folder.
+
+If the folder is buried too deep inside other folders, Windows can't load some of its files (paths over 260 characters). `NUMBSKULL.bat` checks for that and tells you to move it.
+
+**Building it yourself:** `python build_portable.py` makes the zip in `dist/`. It downloads the official embeddable Python from python.org (the same version you run it with) and adds tkinter, the libraries from `requirements.txt`, the project's committed files, and `model.joblib` / `ball_classifier.joblib` if present. It never includes your recordings, logs or settings.
+
+### Double-click with your own Python
 
 No VS Code or typing commands needed:
 

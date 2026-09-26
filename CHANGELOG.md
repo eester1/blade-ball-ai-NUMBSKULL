@@ -4,6 +4,7 @@
 
 ### New
 
+- **Portable download:** `NUMBSKULL-v….-portable.zip` has its own Python, every library, the pretrained model and the panel. Extract it and double-click `NUMBSKULL.bat`, with nothing to install. `build_portable.py` builds it. See [Setup](README.md#setup).
 - **Credits in the panel:** the AI's name (NUMBSKULL), its version, who made it and a clickable link to the GitHub repository, along the bottom. The window title shows the name and version too.
 - **Double-click to start:** `Blade Ball AI.bat` opens the panel with no console window, and the first time installs what the AI needs from the new `requirements.txt`. See [Setup](README.md#setup).
 - **Pretrained model download:** the trained AI and ball detector are attached to releases as a zip, so you can play without recording or training. See [Skip training](README.md#skip-training-use-the-pretrained-model).
