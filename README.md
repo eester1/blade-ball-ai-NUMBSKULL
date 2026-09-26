@@ -2,7 +2,9 @@
 
 An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox). It watches your screen, learns from recordings of you playing, and can then play (dodge/block) on its own by mimicking what you did in similar situations.
 
-There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with a small neural network trained on your own recorded games.
+There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with small neural networks trained on recorded games. A trained model is included, so you can play without training your own.
+
+**Current version: v0.2.1.** To try it, download **`NUMBSKULL-v0.2.1-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
 ## A learning project
 
@@ -26,7 +28,7 @@ If you want to try it, the safest place is a private server or practice mode.
 
 - **[Pretrained model](#skip-training-use-the-pretrained-model)** — download the ready-trained AI and play without recording or training anything.
 - **One download, nothing to install** — the [portable zip](#easiest-the-portable-download-nothing-to-install) has its own Python, every library and the pretrained model. Extract it and double-click `NUMBSKULL.exe`.
-- **Control panel** (`python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
+- **Control panel** (opened by `NUMBSKULL.exe`, `Blade Ball AI.bat` or `python app.py`) — one window for everything: play, record, teach the AI and check results, with a large banner that always says what the AI is doing.
 - **[Auto](#auto)** — tick it and the AI plays round after round by itself. It plays while you're in a round, waits in the lobby after you die or the round ends, and starts again when the next round begins. It can also vote for the Classic gamemode in the lobby for you.
 - **Your own stop key** — pick the key that stops the AI from inside Roblox (End, Home, F8, ...).
 - **Only acts in Roblox** — it sends input only while the Roblox window is active, so it never types into another program.
@@ -93,13 +95,17 @@ python app.py
 
 (`requirements.txt` lists: mss, pynput, joblib, pandas, scikit-learn, opencv-python, numpy, pillow, dxcam.)
 
-`dxcam` is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **45 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with 45 a second. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 45 fps`).
+### Screen capture speed
+
+`dxcam` (included in the portable download and in `requirements.txt`) is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **45 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with 45 a second. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 45 fps`).
 
 In the fastest exchanges the ball is on you 0.1–0.35 s after your red tint shows, so the time between the tint showing and the click matters. To look more often, the ball search runs its white-ball and red-ball halves side by side (about 21 ms a frame instead of 27, with identical results). A block tap no longer pauses the AI while the button is held down, and with logging on, screenshots are saved in the background. Each logged frame records how long it took (`frame_ms`), so the real speed with Roblox running shows in the logs.
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
 
 ## Skip training: use the pretrained model
+
+**The portable download already includes it**, so this section is only for running from the source code with your own Python.
 
 Don't want to record and train your own? Download the ready-trained AI from the [Releases page](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases): the `blade-ball-ai-pretrained-....zip` file attached to a release.
 
@@ -115,9 +121,27 @@ Don't want to record and train your own? Download the ready-trained AI from the 
 - camera zoom 12 notches out from first person;
 - shift lock on.
 
-The zip's `MODEL_INFO.md` has the details. With a different setup it still runs, but sees the ball less reliably and times blocks worse; for your own setup, [training your own](#the-easy-way-the-control-panel) works best.
+See [The included model](#the-included-model) for what it was trained on and how it did. With a different setup it still runs, but sees the ball less reliably and times blocks worse; for your own setup, [training your own](#the-easy-way-the-control-panel) works best.
 
 `.joblib` files can run code when loaded, so only use model files from a source you trust, like this repository's releases.
+
+## The included model
+
+The model in the portable download and in `blade-ball-ai-pretrained-2026-09-25.zip`:
+
+| | |
+|---|---|
+| Trained | 2026-09-25, on 14 recorded sessions of one player (about 14,700 moments of gameplay) |
+| What it is | 5 small neural networks (hidden layers 32 and 16), averaged, reading 11 numbers about the ball (see [Model](#model-train_modelpy)) |
+| Ball detector | A learned filter trained on the same recordings (see [Learned ball detector](#learned-ball-detector-ball_classifierpy)) |
+| Setup it expects | 1920×1080 screen, Roblox windowed and maximized, camera zoom 12 notches out from first person, shift lock on |
+| Abilities | Never uses them; the recordings had none. Use a passive ability. |
+| Made with | Python 3.14, scikit-learn 1.9.1 |
+| Result | Survived **88%** of the times the ball came for it, over 20 test rounds with the [recommended settings](#recommended-settings) |
+
+Blocking timing, the camera and sidestep balancing are rules in `play_live.py`, not part of the model, so they work the same with any model you train.
+
+**Training your own** on your own recordings (see [Teach the AI with your own gameplay](#teach-the-ai-with-your-own-gameplay)) replaces it. That's the way to go if your screen, window mode or zoom are different.
 
 ## Recommended settings
 
@@ -225,7 +249,7 @@ Measured on this project's own runs:
 
 ## The easy way: the control panel
 
-Double-click `Blade Ball AI.bat` (see [Setup](#setup)), or run:
+Double-click `NUMBSKULL.exe` in the portable download, or `Blade Ball AI.bat` in the source code (see [Setup](#setup)), or run:
 
 ```
 python app.py

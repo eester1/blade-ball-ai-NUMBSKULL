@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.2.1 — One download, nothing to install (2026-09-25)
 
 ### New
 
 - **Portable download:** `NUMBSKULL-v….-portable.zip` has its own Python, every library, the pretrained model and the panel. Extract it and double-click `NUMBSKULL.exe`, with nothing to install. `build_portable.py` builds it. See [Setup](README.md#setup).
 - **Credits in the panel:** the AI's name (NUMBSKULL), its version, who made it and a clickable link to the GitHub repository, along the bottom. The window title shows the name and version too.
 - **Double-click to start:** `Blade Ball AI.bat` opens the panel with no console window, and the first time installs what the AI needs from the new `requirements.txt`. See [Setup](README.md#setup).
+- **README brought up to date:** current status, what the model is, which options are worth using, the included model, and the known limitations as they stand now.
+
+## v0.2.0 — Pretrained model, Auto mode, much better blocking (2026-09-25)
+
+### New
+
 - **Pretrained model download:** the trained AI and ball detector are attached to releases as a zip, so you can play without recording or training. See [Skip training](README.md#skip-training-use-the-pretrained-model).
 - **[Recommended settings](README.md#recommended-settings)** in the README: the setup that tested best (88% of targetings survived), which panel options to use, and why to use a passive ability, preferably Guardian Angel.
 - **Spam block in close clashes** (off by default, panel tick box, `--clash-spam`): when a red ball is stuck right on you while you're targeted, the end-of-duel clash, it taps block every 0.05 s instead of at most every 0.35 s. In the logs the AI died after 70 of 157 such moments, 63 of those without a tap. See [Spam block in close clashes](README.md#spam-block-in-close-clashes---clash-spam-off-by-default). Tested live over 20 rounds it mistook ordinary incoming balls for clashes and did worse (the AI died after 7 of 12), so it's off by default.
