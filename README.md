@@ -4,7 +4,7 @@ An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox
 
 There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with small neural networks trained on recorded games. A trained model is included, so you can play without training your own.
 
-**Current version: v0.2.2.** To try it, download **`NUMBSKULL-v0.2.2-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
+**Current version: v0.2.3.** To try it, download **`NUMBSKULL-v0.2.3-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
 ## A learning project
 
@@ -695,7 +695,15 @@ So it's now **on by default** in the panel. It didn't change fast exchanges; lat
 
 In your recordings you strafe left and right about equally (A 44% of the time, D 42%, in bursts of about half a second), so you stay roughly in place. The model decides each moment on its own, with no memory of which way it has been walking, and in live runs it leaned one way: it held A 3–8 times as much as D and walked off to the side of the map.
 
-So when it has strafed one way **1 second more than the other over the last 3 seconds**, it steps the other way for **half a second** instead (`STRAFE_*` in `play_live.py`). It still dodges when the model wants to, but it no longer drifts.
+So when it has strafed one way **0.3 seconds more than the other over the last 10 seconds**, it steps the other way for **0.4 seconds** instead (`STRAFE_*` in `play_live.py`). That counts the keys it keeps holding while the ball is out of view too. It still dodges whenever the model wants to, just evenly both ways.
+
+The first version (1 second over 3 seconds) still let it drift about 7 seconds more left than right per minute, enough to reach the edge of the map in a long round. Replaying the model's own choices from 60 logged rounds:
+
+| Balancing | Drift (more left than right) | Worst round | Time spent sidestepping |
+|---|---|---|---|
+| None | 22 s per minute | 52 s | 58% |
+| First version (1 s over 3 s) | 8.5 s per minute | 21 s | 58% |
+| **Now (0.3 s over 10 s)** | **0.5 s per minute** | **1 s** | 58% |
 
 ## Camera control
 
@@ -771,7 +779,7 @@ Use it to compare before/after a change instead of judging from one memorable ma
 
 - **Ball detection can still lock onto decoys.** Map decorations, other players' cosmetics, glow near your own character, and similar red/white objects can pass the same color/shape filter as the real ball. The learned ball detector plus the tracking rules catch most cases, but the detector is only as good as its training labels, which come from the rule-based tracker itself (no hand-labeled data) — so it learns the tracker's habits along with the ball's look. Hand-labeling a few hundred tricky frames would make it sharper.
 - **Camera control is rule-based, not learned.** The camera controller is a fixed policy (turn toward an edge ball, search when lost), not something imitated from your play — recordings don't capture how much you dragged the camera, only whether right mouse was held. It only turns horizontally.
-- **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball. A balancing rule stops it drifting off to one side of the map (see [Balanced sidestepping](#balanced-sidestepping)), but it still sidesteps left somewhat more than right.
+- **Movement is imitated, not planned.** WASD comes from the model copying your recordings; it has no idea of walls, other players or what's a good position, and can look like "running away" from the ball. A balancing rule keeps its sidestepping even, so it doesn't drift off to one side of the map (see [Balanced sidestepping](#balanced-sidestepping)).
 - **Doesn't use abilities.** The recorder records Q, but the recordings the current model learned from have no ability use in them, so it never learned to use one. Use a passive ability instead (Guardian Angel is best), see [Recommended settings](#recommended-settings). To teach it an active ability, record games where you use it, then **Update model**.
 - **Loses most close clashes.** At the end of a duel the two players close in and spam click. From the screen alone, a ball stuck on you in a clash looks the same as a ball about to hit you, and both spam options that tried to handle it did worse. Telling them apart would need the AI to track where the other players are, which it doesn't yet.
 - **The model only acts when it can see the ball.** Frames with no ball detected produce no features, so while you're targeted with the ball off-screen the camera searches for it but nothing blocks blind. With the current camera rules this is rare: the ball was off screen when it arrived in about 2% of targetings in the best test.

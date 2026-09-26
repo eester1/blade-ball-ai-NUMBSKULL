@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.3 — No more walking into the edge of the map (2026-09-26)
+
+### Fixed
+
+- **Walking into the edge of the map:** sidestep balancing let it drift about 7 seconds more left than right per minute, enough to reach the edge in a long round. It now balances over the last 10 seconds instead of 3, with less leeway, and also counts the keys it keeps holding while the ball is out of view. Replayed on 60 logged rounds, drift drops to about 0.5 seconds a minute while it sidesteps just as much. See [Balanced sidestepping](README.md#balanced-sidestepping).
+
 ## v0.2.2 — Ready to play out of the box (2026-09-25)
 
 ### Changed

@@ -178,9 +178,14 @@ HOVER_MOTION_FRESH_S = 0.2  # growth/approach must have been measured this recen
 # as D in live runs -- walking it off to the side of the map. So when it has
 # strafed one way this many seconds more than the other over the last
 # STRAFE_WINDOW_S, it steps the other way for STRAFE_FLIP_S instead.
-STRAFE_WINDOW_S = 3.0
-STRAFE_MAX_NET_S = 1.0
-STRAFE_FLIP_S = 0.5
+# First set to 3s / 1s / 0.5s: that still let it drift ~7s more left than
+# right per minute in live rounds, enough to reach the edge of the map in a
+# long round. Replaying the model's own choices from 60 logged rounds, these
+# settings cut the drift to ~0.5s a minute (worst round 1s), while it still
+# sidesteps 58% of the time, the same as before.
+STRAFE_WINDOW_S = 10.0
+STRAFE_MAX_NET_S = 0.3
+STRAFE_FLIP_S = 0.4
 
 # Blocking is gated on the ball being close, because timing is what the
 # model gets wrong in both directions: it tapped with the ball ~1.1s away
@@ -781,10 +786,15 @@ class AIController:
                 self.strafe_flip = ("a", t + STRAFE_FLIP_S)
             if self.strafe_flip is not None:
                 desired = desired - {"a", "d"} | {self.strafe_flip[0]}
-        side = ("d" in desired) - ("a" in desired)
+        self.note_strafe(desired, t)
+        return desired
+
+    def note_strafe(self, keys, t):
+        """Count which way it's sidestepping this frame (see STRAFE_*): the
+        keys it wants, or, while the ball is out of view, the keys still held."""
+        side = ("d" in keys) - ("a" in keys)
         self.strafe_hist = [(ht, d) for ht, d in self.strafe_hist if t - ht <= STRAFE_WINDOW_S]
         self.strafe_hist.append((t, side))
-        return desired
 
     def hovering(self, ball, targeted, t):
         """--hold-hover: a red ball coming at you that's barely moving in."""
@@ -1203,6 +1213,7 @@ class AIController:
                         self.release_all()
                         self.prev_ball = None
                         self.pending = None
+                    self.note_strafe(self.currently_held, capture_t)
                     if clash:
                         # Mid-clash the ball is often too quick to see.
                         tapped = self.apply_actions({"block"}, tap_every=CLASH_TAP_S)
