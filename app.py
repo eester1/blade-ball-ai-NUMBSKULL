@@ -29,7 +29,7 @@ from pynput import keyboard
 
 HERE = Path(__file__).resolve().parent
 AI_NAME = "NUMBSKULL"
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 AUTHOR = "eester1"
 REPO_URL = "https://github.com/eester1/blade-ball-ai-NUMBSKULL"
 PYTHON = sys.executable

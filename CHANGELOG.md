@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.4 — Screen recorders, and no more left-right jitter (2026-09-26)
+
+### Fixed
+
+- **Tracking a screen recorder's icon instead of the ball:** a screen recorder's red "recording" dot in the Windows taskbar looked like a small red ball coming at you. The AI tracked it in 81% of one run's frames, so it never followed or blocked the real ball, and kept sidestepping in reaction to it. The taskbar strip is now ignored, like the rest of the HUD.
+- **Constant left-right jitter:** v0.2.3's sidestep balancing stepped the other way whenever it had gone one way a little too long, which switched direction about 108 times a minute. Now it pauses instead: once it has gone one way 0.5 seconds more than the other over the last 30 seconds, it stops stepping further that way. Replayed on 60 logged rounds, it still barely drifts (about 0.9 seconds a minute) and switches direction less often than the model does on its own. See [Balanced sidestepping](README.md#balanced-sidestepping).
+
 ## v0.2.3 — No more walking into the edge of the map (2026-09-26)
 
 ### Fixed

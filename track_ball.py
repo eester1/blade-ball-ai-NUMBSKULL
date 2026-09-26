@@ -152,6 +152,11 @@ DEFAULT_CONFIG = {
         {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.10},    # top stats bar
         {"x0": 0.38, "y0": 0.70, "x1": 0.62, "y1": 0.95}, # block/ability icons
         {"x0": 0.85, "y0": 0.72, "x1": 1.0, "y1": 1.0},   # bottom-right promo banner
+        # Windows taskbar (windowed Roblox): a screen recorder's red
+        # "recording" dot there was taken for a red ball coming at you --
+        # tracked in 81% of frames of one run, so the AI never followed or
+        # blocked the real ball. In fullscreen this is just the bottom 48px.
+        {"x0": 0.0, "y0": 0.955, "x1": 1.0, "y1": 1.0},
     ],
     # Temporal sanity check: flag a detection if it's implausibly far
     # from the last trusted ball position (could be a VFX flash, or

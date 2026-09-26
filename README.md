@@ -4,7 +4,7 @@ An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox
 
 There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with small neural networks trained on recorded games. A trained model is included, so you can play without training your own.
 
-**Current version: v0.2.3.** To try it, download **`NUMBSKULL-v0.2.3-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
+**Current version: v0.2.4.** To try it, download **`NUMBSKULL-v0.2.4-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
 ## A learning project
 
@@ -472,7 +472,7 @@ Because a single frame's color/shape signal alone can't reliably tell the real b
 | `core_min_share`, `core_max_ring`, `core_min_radius` | A close, fast ball's pale trail merges with it into one long blob that fails the round-shape check. For such blobs the largest solid circle inside is recovered as a "core" — if it's at least 12 px in radius, makes up at least half the blob, and stands out from its surroundings (a trail touches one side; a wall or floor would surround it). Sky patches and glowing effects can produce convincing cores too, so a core is only ever used to *continue* an existing track, never to pick up a new ball |
 | `core_radius_ratio`, `size_continuity_frames` | The ball's apparent size changes smoothly. A core continues the track only if it's 0.5–2.5× the tracked ball's last radius, and for 10 frames after a track was last seen a far "jump" candidate has to be too — otherwise a speck elsewhere takes over the moment a close ball blinks out for a frame or two |
 | `min_fill` | Fraction of a blob's outline actually filled with ball color. The ball is a solid disc (~1.0, and ≥0.9 for ~97% of tracked balls in the recordings); round lettering in red announcement banners ("STANDOFF", "NO ONE WON!") is a hollow ring (~0.75–0.85) and gets rejected |
-| `ui_mask_regions` | Fractional screen regions ignored entirely (HUD panels, stat bar, block/ability icons, a couple of static decorations found to cause false positives) |
+| `ui_mask_regions` | Fractional screen regions ignored entirely (HUD panels, stat bar, block/ability icons, the Windows taskbar, a couple of static decorations found to cause false positives). The taskbar strip was added after a screen recorder's red "recording" dot there was taken for a red ball coming at you, in 81% of one run's frames |
 | `max_jump_px_per_frame`, `reset_after_missing_frames`, `confirm_lookahead_frames` | A detection far from the last trusted position isn't rejected outright — it's trusted if the *next* detected frame keeps going near it (real fast movement/bounces continue, a one-off flash doesn't) |
 | `stale_after_frames`, `stale_jitter_px` | If the trusted position hasn't moved at all for this many frames, stop trusting proximity to it and force a fresh whole-frame search — catches long lock-ons onto something static (a decoration, a standing player) that a one-frame check can't |
 | `self_target_threshold` | Highlight score above which you count as targeted. While targeted, a red ball on screen is trusted immediately instead of having to match the previous track — while the camera turns to find the ball the whole scene sweeps ~300 px per frame, so otherwise the ball never looks like a continuation of anything and the camera sweeps right past it (this is what happened in live testing) |
@@ -695,15 +695,18 @@ So it's now **on by default** in the panel. It didn't change fast exchanges; lat
 
 In your recordings you strafe left and right about equally (A 44% of the time, D 42%, in bursts of about half a second), so you stay roughly in place. The model decides each moment on its own, with no memory of which way it has been walking, and in live runs it leaned one way: it held A 3–8 times as much as D and walked off to the side of the map.
 
-So when it has strafed one way **0.3 seconds more than the other over the last 10 seconds**, it steps the other way for **0.4 seconds** instead (`STRAFE_*` in `play_live.py`). That counts the keys it keeps holding while the ball is out of view too. It still dodges whenever the model wants to, just evenly both ways.
+So once it has sidestepped one way **0.5 seconds more than the other over the last 30 seconds**, it **pauses** instead of stepping further that way (`STRAFE_*` in `play_live.py`). Stepping the other way is still allowed, so it still dodges both ways, evenly. It also counts the keys it keeps holding while the ball is out of view.
 
-The first version (1 second over 3 seconds) still let it drift about 7 seconds more left than right per minute, enough to reach the edge of the map in a long round. Replaying the model's own choices from 60 logged rounds:
+Two earlier versions stepped the *other* way instead of pausing. Replaying the model's own choices from 60 logged rounds:
 
-| Balancing | Drift (more left than right) | Worst round | Time spent sidestepping |
-|---|---|---|---|
-| None | 22 s per minute | 52 s | 58% |
-| First version (1 s over 3 s) | 8.5 s per minute | 21 s | 58% |
-| **Now (0.3 s over 10 s)** | **0.5 s per minute** | **1 s** | 58% |
+| Balancing | Drift (more left than right) | Worst round | Time sidestepping | Left/right switches |
+|---|---|---|---|---|
+| None | 22 s per minute | 52 s | 58% | 49 per minute |
+| Step the other way, 1 s over 3 s | 8.5 s per minute | 21 s | 58% | 75 per minute |
+| Step the other way, 0.3 s over 10 s | 0.5 s per minute | 1 s | 58% | **108 per minute** |
+| **Pause, 0.5 s over 30 s (now)** | **0.9 s per minute** | **2 s** | 20% | **46 per minute** |
+
+The first still walked into the edge of the map in long rounds, and the second fixed that but jittered left and right constantly. Pausing barely drifts and switches direction less than the model does on its own. It sidesteps less overall: the model mostly wanted to go left, and those steps are now pauses.
 
 ## Camera control
 
@@ -786,6 +789,7 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Block timing is rule-based.** The model learned *whether* to block reasonably well, but not *when* (your own recorded presses are spread out, so the label is diffuse). Timing is set by the close-enough gate in `play_live.py` (`BLOCK_*` constants), tuned from live runs. **Learned block timing** can replace the key distance with one learned from the AI's own results, but what it learns hasn't been reliable so far (see [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games)). `score_logs.py` shows the ball's distance and size at every tap.
 - **The targeted highlight depends on map lighting.** On strongly orange-lit maps your red "targeted" tint shifts toward orange and only just clears the threshold. Red lava next to your character used to read as targeted too; only the tint's darker red counts now (`self_highlight_val_max` 180). The opposite problem also happened: on the orange desert arena a dark outfit (lit orange, plus a pink sword glow) looked dimly reddish and kept reading as "targeted" — only *bright* pinkish-red counts now (`self_highlight_val_min` 110), which removed most of those false alarms.
 - **Auto depends on Blade Ball's menus.** It recognises the lobby from the green TRADE button and the vote from a picture of the Classic button, so a game update that changes either would break it until the picture in `assets/` is replaced. It also assumes the Roblox window's title contains "Roblox".
+- **Red or white icons on screen outside Roblox can fool it.** It looks at the whole monitor. The taskbar and the window's title bar are ignored (a screen recorder's red "recording" dot in the taskbar was once tracked as the ball for a whole run), but a red or white round overlay drawn *over* the game, like a recording widget or a chat app's popup, can still be taken for the ball. Keep overlays off the game area, or move them to the far left of the screen, which is ignored too.
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
 - **Sensitive to camera zoom.** Detection, block timing and the targeted check are all measured in screen pixels, so the zoom has to stay the same (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play. That includes the window mode: record and play either windowed or fullscreen, not a mix. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)
