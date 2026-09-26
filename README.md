@@ -69,7 +69,7 @@ That's it. The folder has its own private copy of Python, every library, the pre
 
 If the folder is buried too deep inside other folders, Windows can't load some of its files (paths over 260 characters). `NUMBSKULL.exe` checks for that and tells you to move it.
 
-**Building it yourself:** `python build_portable.py` makes the zip in `dist/`. `NUMBSKULL.exe` is a tiny launcher (`launcher/NUMBSKULL.cs`), compiled with the C# compiler that comes with Windows. It downloads the official embeddable Python from python.org (the same version you run it with) and adds tkinter, the libraries from `requirements.txt`, the project's committed files, and `model.joblib` / `ball_classifier.joblib` if present. It never includes your recordings, logs or settings.
+**Building it yourself:** `python build_portable.py` makes the zip in `dist/`. The script downloads the official embeddable Python from python.org (the same version you run it with) and adds tkinter, the libraries from `requirements.txt`, the project's committed files, and `model.joblib` / `ball_classifier.joblib` if present. It never includes your recordings, logs or settings. `NUMBSKULL.exe` is a tiny launcher (`launcher/NUMBSKULL.cs`), compiled with the C# compiler that comes with Windows.
 
 ### Double-click with your own Python
 
