@@ -151,6 +151,17 @@ HOVER_MAX_GROWTH = 3.0      # px/s
 HOVER_MAX_APPROACH = 50.0   # px/s
 HOVER_MOTION_FRESH_S = 0.2  # growth/approach must have been measured this recently
 
+# Keep sidestepping balanced. In your recordings you strafe left and right
+# about equally (A 44% of the time, D 42%, in ~0.5s bursts), so you stay
+# roughly in place. The model decides each moment on its own, with no memory
+# of which way it's been going, and leaned one way -- A about 3-8x as much
+# as D in live runs -- walking it off to the side of the map. So when it has
+# strafed one way this many seconds more than the other over the last
+# STRAFE_WINDOW_S, it steps the other way for STRAFE_FLIP_S instead.
+STRAFE_WINDOW_S = 3.0
+STRAFE_MAX_NET_S = 1.0
+STRAFE_FLIP_S = 0.5
+
 # Blocking is gated on the ball being close, because timing is what the
 # model gets wrong in both directions: it tapped with the ball ~1.1s away
 # (block used up, then died), and right at contact it often *doesn't* want
@@ -622,6 +633,8 @@ class AIController:
         self.fast_exchange = False    # this targeting came right after the last one
         self.spam_near_t = -1e9       # when the ball was last seen close mid-exchange
         self.red_hist = []            # (t, 3D distance) of recent red detections (see incoming)
+        self.strafe_hist = []         # (t, -1 = A / +1 = D / 0) per frame, see STRAFE_*
+        self.strafe_flip = None       # (key to use instead, until when)
         self.new_round = True      # the next "playing" is a new round (not a return from alt-tab)
         self.lobby_streak = 0      # checks in a row that saw the lobby
         self.round_streak = 0      # ... and that saw a round
@@ -710,6 +723,26 @@ class AIController:
             self.spam_near_t = t
             return True
         return ball is None and t - self.spam_near_t < SPAM_UNSEEN_S
+
+    def balance_strafe(self, desired, t):
+        """Swap A/D when it's strafed too much one way lately (see STRAFE_*)."""
+        if self.strafe_flip is not None and t < self.strafe_flip[1]:
+            if desired & {"a", "d"}:
+                desired = desired - {"a", "d"} | {self.strafe_flip[0]}
+        else:
+            self.strafe_flip = None
+            hist = [(ht, d) for ht, d in self.strafe_hist if t - ht <= STRAFE_WINDOW_S]
+            net = sum(d * (t2 - t1) for (t1, d), (t2, _) in zip(hist, hist[1:] + [(t, 0)]))
+            if net <= -STRAFE_MAX_NET_S and "a" in desired:
+                self.strafe_flip = ("d", t + STRAFE_FLIP_S)
+            elif net >= STRAFE_MAX_NET_S and "d" in desired:
+                self.strafe_flip = ("a", t + STRAFE_FLIP_S)
+            if self.strafe_flip is not None:
+                desired = desired - {"a", "d"} | {self.strafe_flip[0]}
+        side = ("d" in desired) - ("a" in desired)
+        self.strafe_hist = [(ht, d) for ht, d in self.strafe_hist if t - ht <= STRAFE_WINDOW_S]
+        self.strafe_hist.append((t, side))
+        return desired
 
     def hovering(self, ball, targeted, t):
         """--hold-hover: a red ball coming at you that's barely moving in."""
@@ -1160,6 +1193,7 @@ class AIController:
                     if not targeted and self.incoming(ball, capture_t, character_xy, height):
                         targeted = True
 
+                    desired = self.balance_strafe(desired, capture_t)
                     spam = self.spamming(targeted, ball, capture_t, character_xy, height)
                     if spam:
                         desired = desired | {"block"}

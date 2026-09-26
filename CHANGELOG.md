@@ -4,6 +4,7 @@
 
 ### New
 
+- **Balanced sidestepping:** it leaned one way (A 3–8× as much as D) and walked off to the side of the map. Now when it has strafed one way 1 s more than the other over the last 3 s, it steps the other way for 0.5 s. See [Balanced sidestepping](README.md#balanced-sidestepping).
 - **Faster reactions:** the AI looks at the screen **45 times a second** (was 30). The ball search runs its white and red halves side by side (about 21 ms a frame instead of 27, identical results). A block tap no longer pauses it for 30 ms, and log screenshots are saved in the background. Logged frames record their processing time (`frame_ms`).
 - **Camera doesn't spin away from a ball it just had:** when you're targeted and a tracked ball vanishes mid-screen, it waits 0.25 s for it to reappear before searching. In the logs, 11 of 15 targetings where the ball wasn't on screen when it arrived had it in view just before.
 - **Spam block in fast exchanges now triggers only when you're targeted again within 0.9 s** (was 1.2 s): in the logs, those exchanges died 35% of the time against 19% for 0.9–1.2 s. Tested live over 20 rounds it did much worse (20% survived in those exchanges, against 67% without), so leave it off.

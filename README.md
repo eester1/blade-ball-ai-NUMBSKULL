@@ -540,6 +540,12 @@ So it's now **on by default** in the panel. Fast exchanges are unchanged, and ar
 1. Play logged Auto runs with an option ticked, then some with it unticked. Keep **Save a log of this run** on, and try one option at a time if you can.
 2. **Score all runs**. Each run shows its settings, so the rounds with and without can be compared. Slow balls and fast exchanges are where a difference should show.
 
+## Balanced sidestepping
+
+In your recordings you strafe left and right about equally (A 44% of the time, D 42%, in bursts of about half a second), so you stay roughly in place. The model decides each moment on its own, with no memory of which way it has been walking, and in live runs it leaned one way: it held A 3–8 times as much as D and walked off to the side of the map.
+
+So when it has strafed one way **1 second more than the other over the last 3 seconds**, it steps the other way for **half a second** instead (`STRAFE_*` in `play_live.py`). It still dodges when the model wants to, but it no longer drifts.
+
 ## Camera control
 
 The model can only react to a ball it can see, so `play_live.py` turns the camera horizontally to keep the ball on screen:
