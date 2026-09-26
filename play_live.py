@@ -73,10 +73,7 @@ from features import FeatureTracker
 # 45. In the fastest exchanges the ball is on you ~0.1-0.35s after the
 # "targeted" tint shows, so every ms between it showing and the tap counts.
 # If a frame takes longer, the next one simply starts straight away.
-# With Roblox running a whole-screen frame measured ~27 ms live, but while
-# the ball is tracked only a window around it is searched (WINDOW_*,
-# ~1 ms instead of ~18), so most frames fit in 1/60 s -- the capture rate.
-FPS = 60
+FPS = 45
 # The recordings the model learned from were made at 15 fps, and its
 # features (velocity, radius growth) are smoothed and differenced per
 # sample -- so the model still sees the ball at that rate, and its last
@@ -313,17 +310,6 @@ def roblox_focused():
     title = ctypes.create_unicode_buffer(256)
     user32.GetWindowTextW(user32.GetForegroundWindow(), title, 256)
     return "roblox" in title.value.lower()
-
-# Searching only around the ball. In a standoff the ball is always near
-# where it just was, and searching a window around it takes ~1 ms instead
-# of ~18 for the whole screen (same ball found in 278 of 278 test frames),
-# so the AI sees each return sooner. Used while a steadily tracked ball is
-# in view and the camera is still; every WINDOW_FULL_EVERY-th frame, and
-# whenever the window turns up nothing, the whole screen is searched as
-# usual -- so a ball (or a red one coming for you) elsewhere is still found.
-WINDOW_FULL_EVERY = 3
-WINDOW_MARGIN_PX = 160    # plus WINDOW_RADII ball radii, each side
-WINDOW_RADII = 4
 
 # If the ball goes undetected for this many consecutive frames, release
 # every held action as a safety net (probably out of a round, or lost).
@@ -687,8 +673,6 @@ class AIController:
         self.features = FeatureTracker()
         self.last_feature_t = 0.0
         self.prev_ball = None     # (x, y, radius) of the last trusted detection
-        self.prev_state = None    # its state ("idle" / "targeting")
-        self.windowed = False     # this frame searched only around the ball
         self.last_seen_side = 1   # -1 = ball last seen left of center, +1 = right
         self.last_inside_t = -1e9  # last time a steady ball was well inside the view
         self.searching = False    # the camera is sweeping to find a lost ball
@@ -700,7 +684,6 @@ class AIController:
         self.motion_t = 0.0       # when those two were last measured
         self.growth = 0.0         # how fast the ball's radius grows, px/s
         self.missing_streak = 0
-        self.missing_since = 0.0  # when the ball went missing (if it is)
         self.stale_count = 0      # consecutive frames barely-unchanged in position
         self.pending = None       # candidate awaiting next-frame confirmation
         self.track_len = 0        # consecutive frames the ball was followed smoothly
@@ -1033,20 +1016,6 @@ class AIController:
             self.screen_vx = self.approach = 0.0
         self.prev_motion = (t, x, distance, state, radius)
 
-    def search_window(self, width, height, now):
-        """The part of the screen to search this frame (see WINDOW_*), or
-        None for the whole screen."""
-        if self.prev_ball is None or self.missing_streak or                 self.track_len < CAMERA_MIN_TRACK_FRAMES or                 self.stale_count >= self.cfg["stale_after_frames"] or                 self.frame_count % WINDOW_FULL_EVERY == 0 or                 self.camera.direction != 0 or now - self.camera.last_active < CAMERA_SETTLE_S:
-            return None
-        # Targeted but following a white ball: the red one coming for you
-        # may be somewhere else.
-        if self.self_red >= self.cfg["self_target_threshold"] and self.prev_state != "targeting":
-            return None
-        x, y, radius = self.prev_ball
-        half = WINDOW_MARGIN_PX + WINDOW_RADII * radius
-        return (max(0, int(x - half)), max(0, int(y - half)),
-                min(width, int(x + half)), min(height, int(y + half)))
-
     # --- camera --------------------------------------------------------
 
     def search(self, now, speed):
@@ -1102,7 +1071,7 @@ class AIController:
             last = self.idle_search_from  # when the last idle sweep began
             if last is not None and now - last <= CAMERA_IDLE_SWEEP_S:
                 self.search(now, CAMERA_IDLE_SWEEP_SPEED)  # keep sweeping
-            elif now - self.missing_since >= CAMERA_IDLE_SEARCH_AFTER_S and \
+            elif self.missing_streak >= CAMERA_IDLE_SEARCH_AFTER_S * FPS and \
                     (last is None or now - last >= CAMERA_IDLE_SWEEP_EVERY_S):
                 self.idle_search_from = now
                 self.search(now, CAMERA_IDLE_SWEEP_SPEED)
@@ -1147,7 +1116,6 @@ class AIController:
             "track_len": self.track_len,
             "self_red": round(self.self_red, 4),
             "frame_ms": round(frame_ms, 1),  # screen grab to actions sent
-            "windowed": self.windowed,       # searched only around the ball (WINDOW_*)
             "clash": t <= self.clash_until,  # spamming block in a close clash (CLASH_*)
         }
         self._log_file.write(json.dumps(entry) + "\n")
@@ -1209,12 +1177,7 @@ class AIController:
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
                 if self.self_red >= self.cfg["self_target_threshold"]:
                     self.targeted_at = (capture_t, self.self_red)
-                window = self.search_window(width, height, capture_t)
-                candidates, cores = track_ball.find_ball_candidates(frame_bgr, self.cfg, window)
-                if window is not None and not candidates and not cores:
-                    candidates, cores = track_ball.find_ball_candidates(frame_bgr, self.cfg)
-                    window = None
-                self.windowed = window is not None
+                candidates, cores = track_ball.find_ball_candidates(frame_bgr, self.cfg)
                 if self.scorer is not None:
                     candidates, cores = self.scorer.filter(
                         frame_bgr, candidates, cores, self.cfg["min_ball_score"])
@@ -1235,8 +1198,6 @@ class AIController:
 
                 if ball is None:
                     self.last_model = None  # start fresh when it's seen again
-                    if self.missing_streak == 0:
-                        self.missing_since = capture_t
                     self.missing_streak += 1
                     if self.missing_streak >= MISSING_FRAMES_RESET:
                         self.release_all()
@@ -1259,7 +1220,6 @@ class AIController:
                     else:
                         self.stale_count = 0
                     self.prev_ball = (x, y, radius)
-                    self.prev_state = state
 
                     # A turning camera sweeps the whole scene across the
                     # screen -- that motion isn't the ball's, so restart

@@ -46,11 +46,9 @@ logger while you play       state and size             dataset.csv           MLP
 pip install mss pynput joblib pandas scikit-learn opencv-python numpy pillow dxcam
 ```
 
-`dxcam` is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **up to 60 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with that. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 60 fps`).
+`dxcam` is optional but strongly recommended: it captures the screen in about 1 ms, instead of about 33 ms with `mss`, which lets the AI look at the game **45 times a second** instead of 15. At 15, a fast late-round ball moved 100–180 px between looks. Without dxcam the AI still works, falling back to `mss`, but it can't keep up with 45 a second. When the AI starts, it prints which capture it's using (`Screen capture: dxcam, 45 fps`).
 
 In the fastest exchanges the ball is on you 0.1–0.35 s after your red tint shows, so the time between the tint showing and the click matters. To look more often, the ball search runs its white-ball and red-ball halves side by side (about 21 ms a frame instead of 27, with identical results). A block tap no longer pauses the AI while the button is held down, and with logging on, screenshots are saved in the background. Each logged frame records how long it took (`frame_ms`), so the real speed with Roblox running shows in the logs.
-
-**Searching only around the ball.** With Roblox running, a whole-screen search took about 27 ms a frame live. In a standoff the ball is always near where it just was, so while a ball is steadily tracked and the camera is still, only a window around it is searched: about **1 ms instead of 18**, with the same ball found in 278 of 278 test frames (`WINDOW_*` in `play_live.py`). Every third frame, and whenever the window turns up nothing, the whole screen is searched as before. It also searches the whole screen while you're targeted but following a white ball, since the red one coming for you may be elsewhere. So a ball elsewhere on screen is still found.
 
 Tested on Windows with Roblox running in a window (or fullscreen) on the primary monitor.
 
