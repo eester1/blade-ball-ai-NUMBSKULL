@@ -218,7 +218,7 @@ class App:
         self.hold_hover = tk.BooleanVar(value=saved.get("hold_hover", True))  # on unless unticked
         ttk.Checkbutton(play, text="Hold block while the ball hovers", variable=self.hold_hover).grid(
             row=5, column=2, columnspan=2, sticky="w")
-        self.clash_spam = tk.BooleanVar(value=saved.get("clash_spam", True))  # on unless unticked
+        self.clash_spam = tk.BooleanVar(value=saved.get("clash_spam", False))
         ttk.Checkbutton(play, text="Spam block in close clashes", variable=self.clash_spam).grid(
             row=6, column=0, columnspan=2, sticky="w")
         ttk.Label(play, text="Stop key:").grid(row=2, column=0, sticky="w")

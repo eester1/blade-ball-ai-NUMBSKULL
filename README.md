@@ -152,7 +152,7 @@ This opens a window with a button for everything, so you never have to type the 
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. It starts **unticked** every time the panel opens. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
   - **Spam block in fast exchanges** (off by default) and **Hold block while the ball hovers** (**on** by default, since it proved itself in live runs) — block options, both remembered. See [Experimental block options](#experimental-block-options).
-  - **Spam block in close clashes** (**on** by default, remembered) — taps block every 0.05 s when a red ball is stuck right on you, as in the clash at the end of a duel. See [Spam block in close clashes](#spam-block-in-close-clashes---clash-spam-on-by-default).
+  - **Spam block in close clashes** (off by default, remembered) — taps block every 0.05 s when a red ball is stuck right on you, meant for the clash at the end of a duel. It did worse in live testing. See [Spam block in close clashes](#spam-block-in-close-clashes---clash-spam-off-by-default).
   - **Stop key** — the key that stops the AI from inside Roblox: End, Home, Delete, Page Up/Down, Pause, Scroll Lock or F6–F12 (keys the game doesn't use). The panel remembers it, along with your other choices.
   - **Start AI** — starts the AI.
   - **Test camera** — turns the camera left for a second, then right, to check the camera setting.
@@ -512,7 +512,7 @@ Tapping block over and over seems to spend the block before the ball arrives, ra
 
 The logs show why timing alone couldn't fix fast exchanges. The built-in rules tapped once, about 0.17 s before the hit, in the exchanges that were survived **and** in those that died, so there was no better moment to move the tap to. Whether spamming helps can only be seen in live play.
 
-### Spam block in close clashes (`--clash-spam`, on by default)
+### Spam block in close clashes (`--clash-spam`, off by default)
 
 At the end of a duel the two players close in until the ball bounces between them faster than anyone can time it, and players spam click (faster than every 0.1 s). On screen that's a **red ball stuck right on top of you** while you're targeted, with the game counting the hits above it.
 
@@ -521,6 +521,8 @@ The AI normally taps block at most every 0.35 s, and only when its rules say the
 So when that shows, it taps block **every 0.05 s**, and keeps going for 0.5 s after the last sign of it, since mid-clash the ball is often too fast to see. The console prints `[clash -- spamming block]`, and logged frames record it (`clash`). Untick **Spam block in close clashes** in the panel to turn it off.
 
 Unlike **Spam block in fast exchanges**, which fired on any quick re-targeting and did worse, this fires only with the ball actually on you.
+
+**Live result: not recommended, leave it off.** Over 20 rounds it switched on 12 times (tapping about 16 times a second), and the AI died after 7 of them. In the screenshots, none were real clashes: no opponent was near, and the ball was simply arriving at the AI or hanging beside it. Spamming spent the block before the ball hit. Overall the AI survived 83% of targetings (94) against 87–88% in the batches before. From the screen alone, "the ball is on you in a clash" and "the ball is about to hit you" look the same.
 
 ### Hold block while the ball hovers (`--hold-hover`)
 
