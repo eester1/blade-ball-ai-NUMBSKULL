@@ -34,6 +34,15 @@ GREEN_LOW = (40, 120, 120)
 GREEN_HIGH = (85, 255, 255)
 
 
+def _ui_scales(frame_h):
+    """How big Blade Ball's menus may be on a screen this tall, relative to
+    1080p: scaled with the screen height, or the same size in pixels (some
+    Roblox menus are drawn at a fixed pixel size). On a 3440x1440 screen,
+    Auto only looked for the height-scaled size and never saw the lobby, so
+    it kept playing there. Both are tried when the screen isn't 1080 tall."""
+    return sorted({frame_h / 1080, 1.0})
+
+
 def _green(img_bgr):
     return cv2.inRange(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV), GREEN_LOW, GREEN_HIGH)
 
@@ -48,10 +57,10 @@ class LobbyDetector:
 
     def _templates_for(self, frame_h):
         if frame_h not in self._templates:
-            base = frame_h / 1080 * WORK_SCALE
             self._templates[frame_h] = [
-                cv2.resize(self._mask, None, fx=base * s, fy=base * s, interpolation=cv2.INTER_AREA)
-                for s in SIZES]
+                cv2.resize(self._mask, None, fx=ui * WORK_SCALE * s, fy=ui * WORK_SCALE * s,
+                           interpolation=cv2.INTER_AREA)
+                for ui in _ui_scales(frame_h) for s in SIZES]
         return self._templates[frame_h]
 
     def score(self, frame_bgr):
@@ -118,10 +127,9 @@ class VoteButton:
 
     def _templates_for(self, frame_h):
         if frame_h not in self._templates:
-            base = frame_h / 1080
             self._templates[frame_h] = [
-                cv2.resize(picture, None, fx=base * s, fy=base * s, interpolation=cv2.INTER_AREA)
-                for picture in self._pictures for s in VOTE_SIZES]
+                cv2.resize(picture, None, fx=ui * s, fy=ui * s, interpolation=cv2.INTER_AREA)
+                for picture in self._pictures for ui in _ui_scales(frame_h) for s in VOTE_SIZES]
         return self._templates[frame_h]
 
     def find(self, frame_bgr):

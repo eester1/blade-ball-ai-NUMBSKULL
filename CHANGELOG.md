@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.5 — Starts on more PCs (2026-09-26)
+## v0.2.5 — Starts on more PCs, works on more screens (2026-09-26)
 
 ### Fixed
 
@@ -9,7 +9,7 @@
 ### New
 
 - **Startup progress in the output box:** loading libraries, loading the model, starting screen capture. The first start on a new PC can take a minute or two while antivirus scans the files, and now you can see it working.
-- **Screen size warning:** if the main screen isn't 1920×1080, the output box says so. The AI is tuned for that size, and on others it may not recognise the ball.
+- **Works on other screen sizes, including ultrawide:** on a 3440×1440 screen it stood still in rounds and kept playing in the lobby. Ball tracking now uses a "game view", the screen scaled to 1080 pixels tall with its middle 1920 pixels kept. On screenshots converted to 3440×1440, 2560×1440 and 1366×768, it found the ball as reliably as at 1920×1080. The lobby and vote checks accept Blade Ball's menus either scaled with the screen or at their 1080p size. The output box says when your screen isn't 1920×1080.
 
 ## v0.2.4 — Screen recorders, and no more left-right jitter (2026-09-26)
 

@@ -504,6 +504,31 @@ def click_at(x, y, screen_w, screen_h, from_xy):
         time.sleep(0.04)
 
 
+# Ball tracking, the targeted check and the model all work in pixels on a
+# 1920x1080 picture. On other screens they get the "game view": the screen
+# scaled to 1080 tall, then its middle 1920 pixels (an ultrawide screen shows
+# the same scene as 16:9 plus extra at the sides, since Roblox keeps the
+# vertical field of view), or padded out to 1920 if the screen is narrower.
+# Menus (the lobby check, the vote click) use the whole screen instead.
+VIEW_W, VIEW_H = 1920, 1080
+
+
+def game_view(frame_bgr):
+    h, w = frame_bgr.shape[:2]
+    if (w, h) == (VIEW_W, VIEW_H):
+        return frame_bgr
+    scale = VIEW_H / h
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    visible = VIEW_W / scale  # screen pixels across that make up the view
+    if w >= visible:
+        x0 = int(round((w - visible) / 2))
+        return cv2.resize(frame_bgr[:, x0:x0 + int(round(visible))], (VIEW_W, VIEW_H),
+                          interpolation=interp)
+    resized = cv2.resize(frame_bgr, (int(round(w * scale)), VIEW_H), interpolation=interp)
+    pad = VIEW_W - resized.shape[1]
+    return cv2.copyMakeBorder(resized, 0, 0, pad // 2, pad - pad // 2, cv2.BORDER_CONSTANT)
+
+
 class Screen:
     """Grabs the primary monitor as a BGR image. Uses dxcam (Windows Desktop
     Duplication: ~1 ms a frame) when it's installed and works, else mss
@@ -1159,21 +1184,22 @@ class AIController:
             print(f"Starting screen capture ({region['width']}x{region['height']})...", flush=True)
             self.screen = Screen(region)
         print(f"Screen capture: {self.screen.method}, {FPS} fps")
-        if (region["width"], region["height"]) != (1920, 1080):
-            # Sizes, distances and screen regions are all tuned in pixels at
-            # 1920x1080: at other sizes it may never recognise the ball.
-            print(f"[warning: your main screen is {region['width']}x{region['height']}, but NUMBSKULL is "
-                  f"made for 1920x1080 at 100% Windows scaling. It may not recognise the ball, and "
-                  f"then it won't move. See the README, Known Limitations]", flush=True)
+        if (region["width"], region["height"]) != (VIEW_W, VIEW_H):
+            print(f"[your main screen is {region['width']}x{region['height']}: NUMBSKULL was made on "
+                  f"1920x1080, so it tracks the ball in the middle of your screen resized to that "
+                  f"(see game_view). Other screen sizes are less tested]", flush=True)
         # Which settings this run played with, so runs can be compared later
         # (e.g. learned vs built-in block timing).
         self.log_event(time.time(), "settings", block_3d_dist=BLOCK_3D_DIST,
                        auto=self.lobby is not None, vote=self.vote_mode, fps=FPS,
                        capture=self.screen.method, spam_block=self.spam_block,
                        hold_hover=self.hold_hover, clash_spam=self.clash_spam)
-        width, height = region["width"], region["height"]
+        # The mouse is kept at the real screen's center while turning the
+        # camera; everything else works in the 1920x1080 game view.
+        self.camera.anchor = (region["left"] + region["width"] // 2,
+                              region["top"] + region["height"] // 2)
+        width, height = VIEW_W, VIEW_H
         center_x, center_y = width / 2, height / 2
-        self.camera.anchor = (region["left"] + width // 2, region["top"] + height // 2)
         roi = self.cfg["self_highlight_roi"]
         character_xy = ((roi["x0"] + roi["x1"]) / 2 * width, (roi["y0"] + roi["y1"]) / 2 * height)
 
@@ -1210,6 +1236,7 @@ class AIController:
                 if self.phase != "playing":
                     time.sleep(max(0.0, interval - (time.time() - start)))
                     continue
+                frame_bgr = game_view(frame_bgr)  # the lobby check and vote used the whole screen
                 self.self_red = track_ball.self_highlight_score(frame_bgr, self.cfg)
                 if self.self_red >= self.cfg["self_target_threshold"]:
                     self.targeted_at = (capture_t, self.self_red)
