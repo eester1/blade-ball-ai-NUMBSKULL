@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.2 — Ready to play out of the box (2026-09-25)
+
+### Changed
+
+- **Auto is on by default:** press Start AI, click into Roblox, and it plays round after round. The panel remembers if you untick it.
+- **Save a log of this run is off by default:** you don't need logs just to play, and a logged run saves about 29 GB of screenshots per hour. Tick it to score runs or use Learn from my runs. The panel remembers your choice.
+
 ## v0.2.1 — One download, nothing to install (2026-09-25)
 
 ### New

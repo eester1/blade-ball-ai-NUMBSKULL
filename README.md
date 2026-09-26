@@ -4,7 +4,7 @@ An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox
 
 There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with small neural networks trained on recorded games. A trained model is included, so you can play without training your own.
 
-**Current version: v0.2.1.** To try it, download **`NUMBSKULL-v0.2.1-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
+**Current version: v0.2.2.** To try it, download **`NUMBSKULL-v0.2.2-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
 ## A learning project
 
@@ -162,8 +162,8 @@ The setup that measured best in live testing: the AI survived **88%** of the tim
 | Setting | Use | Why |
 |---|---|---|
 | Camera | `mouse` | Fastest and most reliable way to turn |
-| Auto | on | Plays round after round by itself |
-| Save a log of this run | on while testing, off for long runs | About 29 GB of screenshots per hour, see [Long runs](#long-runs-and-log-size) |
+| Auto | on (the default) | Plays round after round by itself |
+| Save a log of this run | off (the default), on only while testing | About 29 GB of screenshots per hour, see [Long runs](#long-runs-and-log-size) |
 | Hold block while the ball hovers | **on** | Stops early blocks on slow balls (slow balls survived 68% → 87%) |
 | Spam block in fast exchanges | **off** | Tested live twice, did worse both times |
 | Spam block in close clashes | **off** | Mistook ordinary incoming balls for clashes, did worse |
@@ -277,8 +277,8 @@ This opens a window with a button for everything, so you never have to type the 
 - **Play**
   - **Camera** — how the AI turns the camera: `mouse` (right-drag, fastest, recommended), `keys` (arrow keys) or `off`.
   - **Invert camera** — tick this if the camera test turns the wrong way.
-  - **Save a log of this run** — keeps a log and the frames the AI saw, so the run can be scored, problems can be diagnosed, and **the AI can learn from it** (Learn from my runs only learns from logged runs). Leave it on unless you're running for hours (see [Long runs and log size](#long-runs-and-log-size)).
-  - **Auto** (unticked every time the panel opens) — tick it and the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Left unticked, you switch the AI on and off yourself with Insert.
+  - **Save a log of this run** (off by default, remembered) — keeps a log and the frames the AI saw, so the run can be scored, problems can be diagnosed, and **the AI can learn from it** (Learn from my runs only learns from logged runs). You don't need it just to play. It takes a lot of space, about 29 GB per hour (see [Long runs and log size](#long-runs-and-log-size)).
+  - **Auto** (on by default, remembered) — the AI plays each round by itself, waits in the lobby after you die or the round ends, and starts again when the next round begins (see [Auto](#auto)). Untick it to switch the AI on and off yourself with Insert.
   - **Auto vote** (`None` every time the panel opens) — with Auto ticked, set it to `Classic` and the AI votes for the Classic gamemode each time it's in the lobby (see [Auto vote](#auto-vote)).
   - **Learned block timing** — tick it to block at the timing learned from the AI's own games (press **Learn from my runs** first). Untick it to use the built-in rules. It starts **unticked** every time the panel opens. See [Learned block timing](#learned-block-timing-learning-from-the-ais-own-games).
   - **Spam block in fast exchanges** (off by default) and **Hold block while the ball hovers** (**on** by default, since it proved itself in live runs) — block options, both remembered. See [Experimental block options](#experimental-block-options).
@@ -307,23 +307,24 @@ Only one script runs at a time. While one is running, the other buttons are grey
 2. In the panel, set **Camera** to `mouse` and press **Test camera**, then click into Roblox within 3 seconds.
 3. The view should turn left for a second, then right. If it turns the wrong way, tick **Invert camera**. If it doesn't move at all, try `keys`.
 
-### Let the AI play
+### Let the AI play (Auto, the default)
 
-1. Pick a **Stop key** (End is the default) and press **Start AI**. The banner turns yellow: the AI is loaded but **not playing yet**.
-2. Click into Roblox and press **Insert**. The banner turns green, and the AI is playing.
-3. Press **Insert** again to pause it, whenever you want to play yourself. Press your **stop key** in Roblox, or **Stop** in the panel, to quit.
-4. Afterwards, press **Score latest run** to see how often it got targeted, blocked and survived.
-
-### Let it play round after round (Auto)
-
-1. Tick **Auto**, and optionally set **Auto vote** to `Classic`. Then press **Start AI**.
+1. Optionally set **Auto vote** to `Classic`, and pick a **Stop key** (End is the default). Then press **Start AI**.
 2. Click into Roblox. From here it runs by itself:
    - **In a round** the banner is green and the AI plays.
    - **When you die or the round ends** you're back in the lobby. The AI stops pressing anything, and the banner turns blue: *waiting in the lobby*. With Auto vote on, it votes for Classic.
    - **When the next round starts** it notices, and plays again.
-3. **Insert** still pauses and resumes it, and your **stop key** or **Stop** quits.
+3. **Insert** pauses and resumes it, whenever you want to play yourself. Your **stop key** in Roblox, or **Stop** in the panel, quits.
 
-Auto starts unticked every time the panel opens, so the AI never plays unattended unless you choose it that time. See [Auto](#auto) for how it works.
+### Switching it on and off yourself (Auto unticked)
+
+1. Untick **Auto** and press **Start AI**. The banner turns yellow: the AI is loaded but **not playing yet**.
+2. Click into Roblox and press **Insert**. The banner turns green, and the AI is playing.
+3. Press **Insert** again to pause it. Press your **stop key**, or **Stop** in the panel, to quit.
+
+**To score how it did,** tick **Save a log of this run** before starting, then press **Score latest run** afterwards. It shows how often it was targeted, blocked and survived.
+
+Auto is ticked by default, and the panel remembers if you untick it. See [Auto](#auto) for how it works.
 
 **Safety:** the AI only sends input while the **Roblox window is the active window**. Click into any other window, like this panel, and it lets go of everything and waits, with the banner saying so. It won't type into other programs by accident.
 
@@ -523,7 +524,7 @@ Features are normalized with a `StandardScaler` fit on the training data (saved 
 
 ## Auto
 
-Auto lets you start the AI once and leave it: it plays each round, sits out the time in the lobby, and joins back in by itself when the next round starts. It's **off unless you turn it on**: in the panel, tick **Auto** (it starts unticked every time the panel opens); from the command line, add `--auto`.
+Auto lets you start the AI once and leave it: it plays each round, sits out the time in the lobby, and joins back in by itself when the next round starts. In the panel, **Auto** is ticked by default (the panel remembers if you untick it); from the command line, add `--auto`.
 
 ### What it does
 
@@ -584,7 +585,7 @@ The built-in block rules were tuned by hand. This lets the AI learn **when to bl
 
 ### The routine
 
-1. In the panel, tick **Auto** and **Save a log of this run** (and **Learned block timing** once it has learned something), then **Start AI**.
+1. In the panel, keep **Auto** ticked, tick **Save a log of this run** (and **Learned block timing** once it has learned something), then **Start AI**.
 2. Let it play several rounds, say 5–10.
 3. Press **Learn from my runs**. The output box shows survival by distance and what it learned.
 4. Repeat. Each batch of logged rounds adds more examples, so the learned timing gets more reliable over time.

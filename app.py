@@ -29,7 +29,7 @@ from pynput import keyboard
 
 HERE = Path(__file__).resolve().parent
 AI_NAME = "NUMBSKULL"
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 AUTHOR = "eester1"
 REPO_URL = "https://github.com/eester1/blade-ball-ai-NUMBSKULL"
 PYTHON = sys.executable
@@ -208,10 +208,12 @@ class App:
                      state="readonly", width=8).grid(row=0, column=1, sticky="w")
         self.invert = tk.BooleanVar(value=saved.get("invert", False))
         ttk.Checkbutton(play, text="Invert camera", variable=self.invert).grid(row=0, column=2, sticky="w", padx=8)
-        self.log = tk.BooleanVar(value=saved.get("log", True))
+        # Off unless ticked: most people just play, and a logged run saves ~29 GB
+        # of screenshots an hour. Tick it to score runs or Learn from my runs.
+        self.log = tk.BooleanVar(value=saved.get("log", False))
         ttk.Checkbutton(play, text="Save a log of this run", variable=self.log).grid(row=0, column=3, sticky="w")
-        # Auto and its vote always start off, whatever was used last time.
-        self.auto = tk.BooleanVar(value=False)
+        # Auto is on unless unticked (and remembered); its vote always starts off.
+        self.auto = tk.BooleanVar(value=saved.get("auto", True))
         ttk.Checkbutton(play, text="Auto", variable=self.auto,
                         command=self.update_play_hint).grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Label(play, text="Auto vote:").grid(row=1, column=1, sticky="e", pady=(4, 0))
@@ -397,6 +399,7 @@ class App:
         try:
             SETTINGS_PATH.write_text(json.dumps({
                 "camera": self.camera.get(), "invert": self.invert.get(), "log": self.log.get(),
+                "auto": self.auto.get(),
                 "stop_key": self.stop_key.get(),
                 "rounds_total": self.rounds_total, "spam_block": self.spam_block.get(),
                 "hold_hover": self.hold_hover.get(), "clash_spam": self.clash_spam.get()},
