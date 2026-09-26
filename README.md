@@ -4,7 +4,7 @@ An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox
 
 There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with small neural networks trained on recorded games. A trained model is included, so you can play without training your own.
 
-**Current version: v0.2.4.** To try it, download **`NUMBSKULL-v0.2.4-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
+**Current version: v0.2.5.** To try it, download **`NUMBSKULL-v0.2.5-portable.zip`** from the [latest release](https://github.com/eester1/blade-ball-ai-NUMBSKULL/releases/latest), extract it, and double-click `NUMBSKULL.exe`. There's nothing to install; see [Setup](#setup).
 
 ### Watch it play
 
@@ -798,6 +798,8 @@ Use it to compare before/after a change instead of judging from one memorable ma
 - **Red or white icons on screen outside Roblox can fool it.** It looks at the whole monitor. The taskbar and the window's title bar are ignored (a screen recorder's red "recording" dot in the taskbar was once tracked as the ball for a whole run), but a red or white round overlay drawn *over* the game, like a recording widget or a chat app's popup, can still be taken for the ball. Keep overlays off the game area, or move them to the far left of the screen, which is ignored too.
 - **Logged runs are large.** About 29 GB per hour of play; see [Long runs and log size](#long-runs-and-log-size).
 - **Sensitive to camera zoom.** Detection, block timing and the targeted check are all measured in screen pixels, so the zoom has to stay the same (12 notches out from first person here). See [Camera zoom](#camera-zoom-keep-it-the-same-every-time).
+- **Made for a 1920×1080 screen at 100% Windows scaling.** Ball sizes, distances and the screen areas it ignores are all tuned in pixels at that size. On another resolution, or with Windows display scaling at 125% or 150%, it may never recognise the ball, and since it only moves when it sees the ball, it just stands there. It prints a warning in the panel's output box when the main screen isn't 1920×1080.
+- **If it stays on "Loading the AI...":** the panel's output box shows each startup step. The first start on a new PC can take a minute or two while antivirus scans the files. If the fast screen capture (`dxcam`) doesn't respond within 5 seconds, which happens on some laptops with two graphics chips, it switches to the standard capture by itself.
 - **Single-monitor, fixed-resolution assumption.** Ball detection and screen-center calculations assume the capture region matches between recording and live play. That includes the window mode: record and play either windowed or fullscreen, not a mix. See [Windowed or fullscreen?](#windowed-or-fullscreen-play-the-way-you-record)
 
 ## Credits

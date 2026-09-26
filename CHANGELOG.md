@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.5 — Starts on more PCs (2026-09-26)
+
+### Fixed
+
+- **Stuck on "Loading the AI...":** on some PCs, especially laptops with two graphics chips, the fast screen capture (`dxcam`) hung instead of failing, so the AI never started. If it doesn't deliver a picture within 5 seconds, the standard capture is used instead.
+
+### New
+
+- **Startup progress in the output box:** loading libraries, loading the model, starting screen capture. The first start on a new PC can take a minute or two while antivirus scans the files, and now you can see it working.
+- **Screen size warning:** if the main screen isn't 1920×1080, the output box says so. The AI is tuned for that size, and on others it may not recognise the ball.
+
 ## v0.2.4 — Screen recorders, and no more left-right jitter (2026-09-26)
 
 ### Fixed

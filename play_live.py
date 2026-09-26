@@ -50,6 +50,11 @@ import argparse
 import ctypes
 import json
 import sys
+
+if __name__ == "__main__":
+    # Startup progress, shown in the panel's output box: the first start on a
+    # new PC can take a minute or two while antivirus scans the libraries.
+    print("Loading libraries (the first start on a new PC can take a minute or two)...", flush=True)
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -504,19 +509,37 @@ class Screen:
     Duplication: ~1 ms a frame) when it's installed and works, else mss
     (~33 ms a frame, which alone takes half of a 30 fps frame)."""
 
+    # dxcam can hang instead of failing on some PCs (e.g. laptops with two
+    # graphics chips), which left the AI stuck on "Loading the AI..." forever.
+    # It gets this long to deliver a first picture; otherwise mss is used.
+    DXCAM_TIMEOUT_S = 5.0
+
     def __init__(self, region):
         self.region = region
         self.method = "mss"
         self._cam = None
-        try:
-            import dxcam
-            cam = dxcam.create(output_color="BGR")
-            if cam is not None and (cam.width, cam.height) == (region["width"], region["height"]):
-                cam.start(target_fps=60, video_mode=True)
-                self._cam, self.method = cam, "dxcam"
-        except Exception:  # not installed, or no Desktop Duplication here
-            self._cam = None
-        if self._cam is None:
+        result = {}
+
+        def start_dxcam():
+            try:
+                import dxcam
+                cam = dxcam.create(output_color="BGR")
+                if cam is not None and (cam.width, cam.height) == (region["width"], region["height"]):
+                    cam.start(target_fps=60, video_mode=True)
+                    cam.get_latest_frame()  # waits for the first picture
+                    result["cam"] = cam
+            except Exception:  # not installed, or no Desktop Duplication here
+                pass
+
+        worker = threading.Thread(target=start_dxcam, daemon=True)
+        worker.start()
+        worker.join(self.DXCAM_TIMEOUT_S)
+        if "cam" in result:
+            self._cam, self.method = result["cam"], "dxcam"
+        else:
+            if worker.is_alive():
+                print(f"[fast screen capture (dxcam) didn't respond in {self.DXCAM_TIMEOUT_S:.0f}s "
+                      f"-- using the standard one (mss) instead]", flush=True)
             self._sct = mss.mss()
 
     def grab(self):
@@ -1133,8 +1156,15 @@ class AIController:
         interval = 1.0 / FPS
         region = self._sct.monitors[1]
         if self.screen is None:
+            print(f"Starting screen capture ({region['width']}x{region['height']})...", flush=True)
             self.screen = Screen(region)
         print(f"Screen capture: {self.screen.method}, {FPS} fps")
+        if (region["width"], region["height"]) != (1920, 1080):
+            # Sizes, distances and screen regions are all tuned in pixels at
+            # 1920x1080: at other sizes it may never recognise the ball.
+            print(f"[warning: your main screen is {region['width']}x{region['height']}, but NUMBSKULL is "
+                  f"made for 1920x1080 at 100% Windows scaling. It may not recognise the ball, and "
+                  f"then it won't move. See the README, Known Limitations]", flush=True)
         # Which settings this run played with, so runs can be compared later
         # (e.g. learned vs built-in block timing).
         self.log_event(time.time(), "settings", block_3d_dist=BLOCK_3D_DIST,
@@ -1346,6 +1376,7 @@ def main():
     if args.learned_block:
         use_learned_block_timing()
 
+    print("Loading the model...", flush=True)
     controller = AIController(args.model, args.camera, args.camera_invert, log_path=args.log,
                               use_classifier=not args.no_classifier, auto=args.auto,
                               quit_key=args.quit_key,
