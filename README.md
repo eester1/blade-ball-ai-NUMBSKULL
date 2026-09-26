@@ -4,6 +4,19 @@ An imitation-learning bot for [Blade Ball](https://www.roblox.com/games) (Roblox
 
 There is no game-engine integration and no memory reading — everything is done by taking screenshots and detecting the ball with computer vision, then predicting keyboard/mouse actions with a small neural network trained on your own recorded games.
 
+## A learning project
+
+This is an **educational project**: a hands-on way to learn how a game-playing AI is built from nothing but screenshots and your own gameplay. It isn't meant as a cheat or a way to get ahead of other players. It isn't good enough for that anyway (see [Known Limitations](#known-limitations)), and using it in public matches breaks Roblox's rules (see the warning below).
+
+What you can learn from it:
+
+- **Imitation learning:** recording a human playing and training a model to copy them ([Model](#model-train_modelpy), [Features](#features-featurespy)), and where copying falls short. For example, the model copied *whether* to block but not *when*, and kept walking one way until it drifted off the map.
+- **Computer vision without a game API:** finding a small, fast ball on screen with colour thresholds, shape checks and a learned filter, and the decoys that fool it ([Ball detection](#ball-detection-track_ballpy), [Learned ball detector](#learned-ball-detector-ball_classifierpy)).
+- **Real-time control:** capturing the screen, deciding and sending input tens of times a second, and why every millisecond counts ([Setup](#setup), [Camera control](#camera-control)).
+- **Measuring instead of guessing:** every change here was tested over logged rounds and kept or reverted by the numbers. Several ideas that sounded right made it worse, and the README keeps those results too ([Experimental block options](#experimental-block-options), [Scoring runs](#scoring-runs-score_logspy)).
+
+If you want to try it, the safest place is a private server or practice mode.
+
 > **Status:** functional but not reliable enough to play unattended yet. See [Known Limitations](#known-limitations) before expecting too much of it.
 
 > [!WARNING]
