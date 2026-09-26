@@ -1,13 +1,16 @@
 """
 Builds the portable NUMBSKULL download: one zip with its own private copy of
 Python, every library the AI needs, the pretrained model and the panel.
-Whoever downloads it extracts it and double-clicks NUMBSKULL.bat -- no Python
+Whoever downloads it extracts it and double-clicks NUMBSKULL.exe -- no Python
 install, no pip.
 
 USAGE (on Windows, with the same Python version the zip should contain):
     python build_portable.py
 
 Output: dist/NUMBSKULL-v<version>-portable.zip (dist/ is ignored by git).
+Inside: a NUMBSKULL folder with just NUMBSKULL.exe (the launcher, built from
+launcher/NUMBSKULL.cs with the C# compiler that comes with Windows),
+READ ME FIRST.txt, and a "files" folder with everything else.
 
 How it's put together:
   - Python itself is the official "embeddable" build from python.org for
@@ -34,41 +37,24 @@ import app  # for VERSION
 HERE = Path(__file__).resolve().parent
 DIST = HERE / "dist"
 NAME = f"NUMBSKULL-v{app.VERSION}-portable"  # the zip's name
-FOLDER = "NUMBSKULL"  # the folder inside it: short, see LAUNCHER
+FOLDER = "NUMBSKULL"  # the folder inside it: short, see the path check in the launcher
 BUILD = DIST / FOLDER
-PY = BUILD / "python"
-
-LAUNCHER = r'''@echo off
-rem Double-click to open NUMBSKULL, the Blade Ball AI control panel.
-rem Everything it needs is in this folder -- nothing to install.
-cd /d "%~dp0"
-
-rem Windows can't load files whose full path is over 260 characters, and
-rem the deepest library file here is about 140 characters inside this folder.
-set "HERE=%~dp0"
-if not "%HERE:~110,1%"=="" (
-    echo This folder is too deep inside other folders for Windows:
-    echo   %HERE%
-    echo.
-    echo Move the NUMBSKULL folder somewhere shorter, for example straight into
-    echo Documents or C:\NUMBSKULL, then double-click NUMBSKULL.bat again.
-    pause
-    exit /b 1
-)
-
-start "" "%~dp0python\pythonw.exe" app.py
-'''
+FILES = BUILD / "files"  # everything but NUMBSKULL.exe and the READ ME
+PY = FILES / "python"
+CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")  # comes with Windows
 
 README = f'''NUMBSKULL v{app.VERSION} -- portable
 =================================
 
 1. Extract the NUMBSKULL folder somewhere with a short path, e.g. straight
    into Documents (not inside the zip, and not buried in other folders).
-2. Double-click NUMBSKULL.bat.
+2. Double-click NUMBSKULL.exe.
    If Windows shows "Windows protected your PC": More info -> Run anyway.
 3. In the panel, press Start AI.
 
-Nothing to install: Python and everything else are inside the "python" folder.
+Nothing to install: Python and everything else are inside the "files"
+folder. Keep NUMBSKULL.exe next to it.
+
 The pretrained model is included. It plays best with the setup it was
 trained on: 1920x1080 screen, Roblox windowed and maximized, camera zoom
 12 notches out from first person, shift lock on.
@@ -130,22 +116,33 @@ def main():
     archive = subprocess.run(["git", "archive", "HEAD"], cwd=HERE, capture_output=True, check=True).stdout
     tar_path = DIST / "_src.tar"
     tar_path.write_bytes(archive)
-    shutil.unpack_archive(tar_path, BUILD)
+    shutil.unpack_archive(tar_path, FILES)
     tar_path.unlink()
     for f in ("Blade Ball AI.bat", "build_portable.py", ".gitignore", ".gitattributes"):
-        (BUILD / f).unlink(missing_ok=True)
+        (FILES / f).unlink(missing_ok=True)
+    shutil.rmtree(FILES / "launcher", ignore_errors=True)
     for f in ("model.joblib", "ball_classifier.joblib"):
         if (HERE / f).exists():
-            shutil.copy2(HERE / f, BUILD)
+            shutil.copy2(HERE / f, FILES)
         else:
             print(f"(no {f} here -- the download won't include a trained model)")
-    (BUILD / "NUMBSKULL.bat").write_text(LAUNCHER, newline="\r\n")
     (BUILD / "READ ME FIRST.txt").write_text(README, newline="\r\n")
 
-    # 6. Zip it.
+    # 6. NUMBSKULL.exe (launcher/NUMBSKULL.cs), told how long the folder's
+    # own path can be before the deepest file inside goes over Windows' 260
+    # character limit.
+    longest = max(len(str(f.relative_to(BUILD))) for f in BUILD.rglob("*"))
+    source = (HERE / "launcher" / "NUMBSKULL.cs").read_text(encoding="utf-8")
+    cs = DIST / "_NUMBSKULL.cs"
+    cs.write_text(source.replace("__MAX_FOLDER_LENGTH__", str(259 - longest)), encoding="utf-8")
+    run(CSC, "/nologo", "/target:winexe", "/optimize", f"/win32icon:{HERE / 'assets' / 'numbskull.ico'}",
+        f"/out:{BUILD / 'NUMBSKULL.exe'}", cs)
+    cs.unlink()
+
+    # 7. Zip it.
     out = shutil.make_archive(str(DIST / NAME), "zip", DIST, FOLDER)
-    longest = max(len(str(f.relative_to(DIST))) for f in BUILD.rglob("*"))
-    print(f"Longest path inside the zip: {longest} characters")
+    print(f"Deepest file is {longest} characters inside the folder, so the folder's own path "
+          f"can be up to {259 - longest}")
     size = Path(out).stat().st_size / 1e6
     print(f"\nBuilt {out} ({size:.0f} MB)")
 

@@ -166,6 +166,10 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title(f"{AI_NAME} v{VERSION} -- Blade Ball AI")
+        try:
+            root.iconbitmap(str(HERE / "assets" / "numbskull.ico"))
+        except tk.TclError:
+            pass  # no icon file: the default one is fine
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.output = queue.Queue()
